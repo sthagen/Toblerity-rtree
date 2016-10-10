@@ -15,8 +15,6 @@ class rtree_build_py(build_py):
             self.mkpath(os.path.join(target_dir, 'rtree'))
 
             with open(os.path.join(target_dir, 'rtree/ENVIRON.txt'), 'w') as fobj:
-                if 'SPATIALINDEX_LIBRARY' in os.environ:
-                    fobj.write('SPATIALINDEX_LIBRARY=%s\n' % os.environ['SPATIALINDEX_LIBRARY'])
                 if 'SPATIALINDEX_C_LIBRARY' in os.environ:
                     fobj.write('SPATIALINDEX_C_LIBRARY=%s\n' % os.environ['SPATIALINDEX_C_LIBRARY'])
 
