@@ -70,30 +70,51 @@ def free_error_msg_ptr(result, func, cargs):
     rt.Index_Free(p)
     return retvalue
 
-# Read back env vars that were set up during package installation.
+
+# Determine the name or path of the spatialindex shared library to use.
+#
+# Defaults for NT and Posix operating systems are provided. These may be
+# overridden by 1) values defined in a configuration file, ultimately 2)
+# values defined by environment variables.
+if os.name == 'nt':
+    libpath = 'spatialindex_c.dll'
+elif os.name == 'posix':
+    libpath = 'spatialindex_c'
+else:
+    raise RTreeError('Unsupported OS "%s"' % os.name)
+
+# Read back configuration written during package installation.
+# TODO: should this be a INI style config file?
+pkg_data = None
+
 try:
-    for line in pkgutil.get_data('rtree', 'ENVIRON.txt').decode().split():
+    pkg_data = pkgutil.get_data('rtree', 'ENVIRON.txt')
+except IOError:
+    # TODO: don't pass silently, this should be logged.
+    # The data file ENVIRON.txt doesn't exist; that is OK
+    pass
+
+if pkg_data:
+    for line in pkg_data.decode().split():
+        # TODO: use of INI file and config parser could provide
+        # better-defined behavior below.
+
         # Ignore lines with wrong number of '=' signs
         kv = line.split('=')
         if len(kv) != 2:
             continue
+        # TODO: strip these values? Might they include whitespace?
         key, val = kv
+        if key == 'SPATIALINDEX_C_LIBRARY':
+            libpath = val
 
-        # Only allow certain vars to be set
-        legal_envs = ('SPATIALINDEX_LIBRARY', 'SPATIALINDEX_C_LIBRARY')
-        if key not in legal_envs:
-            raise ValueError(
-                'Illegal variable in ENVIRON.txt: %s.  Must be one of %s' %
-                (key, str(legal_envs)))
+# Finally, let environment variable override the code above.
+libpath = os.environ.get('SPATIALINDEX_C_LIBRARY', libpath)
 
-        # Only set from config file if not already set in env
-        if key not in os.environ:
-            os.environ[key] = val
+# Split the libpath.
+lib_path, lib_name = os.path.split(libpath)
 
-except IOError:
-    # The data file ENVIRON.txt doesn't exist; that is OK
-    pass
-
+# Load the library determined above.
 
 if os.name == 'nt':
 
@@ -102,11 +123,9 @@ if os.name == 'nt':
 
         Try loading the DLL from the current package directory first,
         then from the Windows DLL search path.
-
         """
         try:
-            dllpaths = (os.path.abspath(os.path.dirname(__file__)),
-                        ) + dllpaths
+            dllpaths = (os.path.abspath(os.path.dirname(__file__)),) + dllpaths
         except NameError:
             pass  # no __file__ attribute on PyPy and some frozen distributions
         for path in dllpaths:
@@ -127,27 +146,13 @@ if os.name == 'nt':
                     os.environ['PATH'] = oldenv
         return None
 
-    if 'SPATIALINDEX_C_LIBRARY' in os.environ:
-        lib_path, lib_name = os.path.split(os.environ['SPATIALINDEX_C_LIBRARY'])
-        rt = _load_library(lib_name, ctypes.cdll.LoadLibrary, (lib_path,))
-    else:
-        rt = _load_library('spatialindex_c.dll', ctypes.cdll.LoadLibrary)
-    if not rt:
-        raise OSError("could not find or load spatialindex_c.dll")
+    rt = _load_library(lib_name, ctypes.cdll.LoadLibrary, (lib_path,))
 
-elif os.name == 'posix':
-    platform = os.uname()[0]
-    if 'SPATIALINDEX_C_LIBRARY' in os.environ:
-        lib_name = os.environ['SPATIALINDEX_C_LIBRARY']
-    else:
-        lib_name = find_library('spatialindex_c')
-
-    if lib_name is None:
-        raise OSError("Could not find libspatialindex_c library file")
-
-    rt = ctypes.CDLL(lib_name)
 else:
-    raise RTreeError('Unsupported OS "%s"' % os.name)
+    if not lib_path:
+        libpath = find_library(lib_name)
+    rt = ctypes.CDLL(libpath)
+
 
 rt.Error_GetLastErrorNum.restype = ctypes.c_int
 
