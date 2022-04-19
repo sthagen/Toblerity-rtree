@@ -1,27 +1,29 @@
-import sys
-import unittest
 import ctypes
-import rtree
+import pickle
+import sys
+import tempfile
+import unittest
+from typing import Dict, Iterator, Tuple
+
 import numpy as np
 import pytest
-import tempfile
-import pickle
 
-from rtree import index, core
-
-# is this running on Python 3
-PY3 = sys.version_info.major >= 3
+import rtree
+from rtree import core, index
+from rtree.exceptions import RTreeError
 
 
 class IndexTestCase(unittest.TestCase):
-    def setUp(self):
-        self.boxes15 = np.genfromtxt('boxes_15x15.data')
+    def setUp(self) -> None:
+        self.boxes15 = np.genfromtxt("boxes_15x15.data")
         self.idx = index.Index()
         for i, coords in enumerate(self.boxes15):
             self.idx.add(i, coords)
 
-    def boxes15_stream(self, interleaved=True):
-        boxes15 = np.genfromtxt('boxes_15x15.data')
+    def boxes15_stream(
+        self, interleaved: bool = True
+    ) -> Iterator[Tuple[int, Tuple[float, float, float, float], int]]:
+        boxes15 = np.genfromtxt("boxes_15x15.data")
         for i, (minx, miny, maxx, maxy) in enumerate(boxes15):
 
             if interleaved:
@@ -29,70 +31,83 @@ class IndexTestCase(unittest.TestCase):
             else:
                 yield (i, (minx, maxx, miny, maxy), 42)
 
-    def stream_basic(self):
+    def stream_basic(self) -> None:
         # some versions of libspatialindex screw up indexes on stream loading
         # so do a very simple index check
         rtree_test = rtree.index.Index(
             [(1564, [0, 0, 0, 10, 10, 10], None)],
-            properties=rtree.index.Property(dimension=3))
+            properties=rtree.index.Property(dimension=3),
+        )
         assert next(rtree_test.intersection([1, 1, 1, 2, 2, 2])) == 1564
 
 
 class IndexVersion(unittest.TestCase):
-
-    def test_libsidx_version(self):
+    def test_libsidx_version(self) -> None:
         self.assertTrue(index.major_version == 1)
         self.assertTrue(index.minor_version >= 7)
 
 
-class IndexBounds(unittest.TestCase):
+class IndexCount(unittest.TestCase):
+    def setUp(self) -> None:
+        self.boxes15 = np.genfromtxt("boxes_15x15.data")
+        self.idx = index.Index()
+        for i, coords in enumerate(self.boxes15):
+            self.idx.add(i, coords)
 
-    def test_invalid_specifications(self):
+    def test_len(self) -> None:
+        self.assertEqual(len(self.idx), len(self.boxes15))
+
+    def test_get_size(self) -> None:
+        with pytest.deprecated_call():
+            self.assertEqual(self.idx.get_size(), len(self.boxes15))
+
+
+class IndexBounds(unittest.TestCase):
+    def test_invalid_specifications(self) -> None:
         """Invalid specifications of bounds properly throw"""
 
         idx = index.Index()
-        self.assertRaises(core.RTreeError, idx.add,
-                          None, (0.0, 0.0, -1.0, 1.0))
-        self.assertRaises(core.RTreeError, idx.intersection,
-                          (0.0, 0.0, -1.0, 1.0))
-        self.assertRaises(ctypes.ArgumentError, idx.add, None, (1, 1,))
+        self.assertRaises(RTreeError, idx.add, None, (0.0, 0.0, -1.0, 1.0))
+        self.assertRaises(RTreeError, idx.intersection, (0.0, 0.0, -1.0, 1.0))
+        self.assertRaises(ctypes.ArgumentError, idx.add, None, (1, 1))
 
 
 class IndexProperties(IndexTestCase):
-
     @pytest.mark.skipif(
-        not hasattr(core.rt, 'Index_GetResultSetOffset'),
-        reason="Index_GetResultsSetOffset required in libspatialindex")
-    def test_result_offset(self):
+        not hasattr(core.rt, "Index_GetResultSetOffset"),
+        reason="Index_GetResultsSetOffset required in libspatialindex",
+    )
+    def test_result_offset(self) -> None:
         idx = index.Rtree()
         idx.set_result_offset(3)
         self.assertEqual(idx.result_offset, 3)
 
     @pytest.mark.skipif(
-        not hasattr(core.rt, 'Index_GetResultSetLimit'),
-        reason="Index_GetResultsSetOffset required in libspatialindex")
-    def test_result_limit(self):
+        not hasattr(core.rt, "Index_GetResultSetLimit"),
+        reason="Index_GetResultsSetOffset required in libspatialindex",
+    )
+    def test_result_limit(self) -> None:
         idx = index.Rtree()
         idx.set_result_limit(44)
         self.assertEqual(idx.result_limit, 44)
 
-    def test_invalid_properties(self):
+    def test_invalid_properties(self) -> None:
         """Invalid values are guarded"""
         p = index.Property()
 
-        self.assertRaises(core.RTreeError, p.set_buffering_capacity, -4321)
-        self.assertRaises(core.RTreeError, p.set_region_pool_capacity, -4321)
-        self.assertRaises(core.RTreeError, p.set_point_pool_capacity, -4321)
-        self.assertRaises(core.RTreeError, p.set_index_pool_capacity, -4321)
-        self.assertRaises(core.RTreeError, p.set_pagesize, -4321)
-        self.assertRaises(core.RTreeError, p.set_index_capacity, -4321)
-        self.assertRaises(core.RTreeError, p.set_storage, -4321)
-        self.assertRaises(core.RTreeError, p.set_variant, -4321)
-        self.assertRaises(core.RTreeError, p.set_dimension, -2)
-        self.assertRaises(core.RTreeError, p.set_index_type, 6)
-        self.assertRaises(core.RTreeError, p.get_index_id)
+        self.assertRaises(RTreeError, p.set_buffering_capacity, -4321)
+        self.assertRaises(RTreeError, p.set_region_pool_capacity, -4321)
+        self.assertRaises(RTreeError, p.set_point_pool_capacity, -4321)
+        self.assertRaises(RTreeError, p.set_index_pool_capacity, -4321)
+        self.assertRaises(RTreeError, p.set_pagesize, -4321)
+        self.assertRaises(RTreeError, p.set_index_capacity, -4321)
+        self.assertRaises(RTreeError, p.set_storage, -4321)
+        self.assertRaises(RTreeError, p.set_variant, -4321)
+        self.assertRaises(RTreeError, p.set_dimension, -2)
+        self.assertRaises(RTreeError, p.set_index_type, 6)
+        self.assertRaises(RTreeError, p.get_index_id)
 
-    def test_index_properties(self):
+    def test_index_properties(self) -> None:
         """Setting index properties returns expected values"""
         idx = index.Rtree()
         p = index.Property()
@@ -114,8 +129,8 @@ class IndexProperties(IndexTestCase):
         p.writethrough = True
         p.tpr_horizon = 20.0
         p.reinsert_factor = 0.3
-        p.idx_extension = 'index'
-        p.dat_extension = 'data'
+        p.idx_extension = "index"
+        p.dat_extension = "data"
 
         idx = index.Index(properties=p)
 
@@ -137,21 +152,29 @@ class IndexProperties(IndexTestCase):
         self.assertEqual(props.writethrough, True)
         self.assertEqual(props.tpr_horizon, 20.0)
         self.assertEqual(props.reinsert_factor, 0.3)
-        self.assertEqual(props.idx_extension, 'index')
-        self.assertEqual(props.dat_extension, 'data')
+        self.assertEqual(props.idx_extension, "index")
+        self.assertEqual(props.dat_extension, "data")
 
 
 class TestPickling(unittest.TestCase):
-
-    def test_index(self):
+    # https://github.com/Toblerity/rtree/issues/87
+    @pytest.mark.xfail
+    def test_index(self) -> None:
         idx = rtree.index.Index()
+        idx.insert(0, [0, 1, 2, 3], 4)
         unpickled = pickle.loads(pickle.dumps(idx))
         self.assertNotEqual(idx.handle, unpickled.handle)
-        self.assertEqual(idx.properties.as_dict(),
-                         unpickled.properties.as_dict())
+        self.assertEqual(idx.properties.as_dict(), unpickled.properties.as_dict())
         self.assertEqual(idx.interleaved, unpickled.interleaved)
+        self.assertEqual(len(idx), len(unpickled))
+        self.assertEqual(idx.bounds, unpickled.bounds)
+        a = next(idx.intersection(idx.bounds, objects=True))
+        b = next(unpickled.intersection(unpickled.bounds, objects=True))
+        self.assertEqual(a.id, b.id)
+        self.assertEqual(a.bounds, b.bounds)
+        self.assertEqual(a.object, b.object)
 
-    def test_property(self):
+    def test_property(self) -> None:
         p = rtree.index.Property()
         unpickled = pickle.loads(pickle.dumps(p))
         self.assertNotEqual(p.handle, unpickled.handle)
@@ -159,8 +182,7 @@ class TestPickling(unittest.TestCase):
 
 
 class IndexContainer(IndexTestCase):
-
-    def test_container(self):
+    def test_container(self) -> None:
         """rtree.index.RtreeContainer works as expected"""
 
         container = rtree.index.RtreeContainer()
@@ -217,8 +239,7 @@ class IndexContainer(IndexTestCase):
 
 
 class IndexIntersection(IndexTestCase):
-
-    def test_intersection(self):
+    def test_intersection(self) -> None:
         """Test basic insertion and retrieval"""
 
         self.assertTrue(0 in self.idx.intersection((0, 0, 60, 60)))
@@ -227,32 +248,24 @@ class IndexIntersection(IndexTestCase):
         self.assertTrue(len(hits), 10)
         self.assertEqual(hits, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
 
-    def test_objects(self):
+    def test_objects(self) -> None:
         """Test insertion of objects"""
 
         idx = index.Index()
         for i, coords in enumerate(self.boxes15):
             idx.add(i, coords)
         idx.insert(
-            4321,
-            (34.3776829412,
-             26.7375853734,
-             49.3776829412,
-             41.7375853734),
-            obj=42)
+            4321, (34.3776829412, 26.7375853734, 49.3776829412, 41.7375853734), obj=42
+        )
         hits = idx.intersection((0, 0, 60, 60), objects=True)
         hit = [h for h in hits if h.id == 4321][0]
         self.assertEqual(hit.id, 4321)
         self.assertEqual(hit.object, 42)
-        box = ['%.10f' % t for t in hit.bbox]
-        expected = [
-            '34.3776829412',
-            '26.7375853734',
-            '49.3776829412',
-            '41.7375853734']
+        box = ["%.10f" % t for t in hit.bbox]
+        expected = ["34.3776829412", "26.7375853734", "49.3776829412", "41.7375853734"]
         self.assertEqual(box, expected)
 
-    def test_double_insertion(self):
+    def test_double_insertion(self) -> None:
         """Inserting the same id twice does not overwrite data"""
         idx = index.Index()
         idx.add(1, (2, 2))
@@ -261,34 +274,143 @@ class IndexIntersection(IndexTestCase):
         self.assertEqual([1, 1], list(idx.intersection((0, 0, 5, 5))))
 
 
+class TestIndexIntersectionUnion:
+    @pytest.fixture(scope="class")
+    def index_a_interleaved(self) -> index.Index:
+        idx = index.Index(interleaved=True)
+        idx.insert(1, (3, 3, 5, 5), "a_1")
+        idx.insert(2, (4, 2, 6, 4), "a_2")
+        return idx
+
+    @pytest.fixture(scope="class")
+    def index_a_uninterleaved(self) -> index.Index:
+        idx = index.Index(interleaved=False)
+        idx.insert(1, (3, 5, 3, 5), "a_1")
+        idx.insert(2, (4, 6, 2, 4), "a_2")
+        return idx
+
+    @pytest.fixture(scope="class")
+    def index_b_interleaved(self) -> index.Index:
+        idx = index.Index(interleaved=True)
+        idx.insert(3, (2, 1, 7, 6), "b_3")
+        idx.insert(4, (8, 7, 9, 8), "b_4")
+        return idx
+
+    @pytest.fixture(scope="class")
+    def index_b_uninterleaved(self) -> index.Index:
+        idx = index.Index(interleaved=False)
+        idx.insert(3, (2, 7, 1, 6), "b_3")
+        idx.insert(4, (8, 9, 7, 8), "b_4")
+        return idx
+
+    def test_intersection_interleaved(
+        self, index_a_interleaved: index.Index, index_b_interleaved: index.Index
+    ) -> None:
+        index_c_interleaved = index_a_interleaved & index_b_interleaved
+        assert index_c_interleaved.interleaved
+        assert len(index_c_interleaved) == 2
+        for hit in index_c_interleaved.intersection(
+            index_c_interleaved.bounds, objects=True
+        ):
+            if hit.bbox == [3.0, 3.0, 5.0, 5.0]:
+                assert hit.object == ("a_1", "b_3")
+            elif hit.bbox == [4.0, 2.0, 6.0, 4.0]:
+                assert hit.object == ("a_2", "b_3")
+            else:
+                assert False
+
+    def test_intersection_uninterleaved(
+        self, index_a_uninterleaved: index.Index, index_b_uninterleaved: index.Index
+    ) -> None:
+        index_c_uninterleaved = index_a_uninterleaved & index_b_uninterleaved
+        assert not index_c_uninterleaved.interleaved
+        assert len(index_c_uninterleaved) == 2
+        for hit in index_c_uninterleaved.intersection(
+            index_c_uninterleaved.bounds, objects=True
+        ):
+            if hit.bounds == [3.0, 5.0, 3.0, 5.0]:
+                assert hit.object == ("a_1", "b_3")
+            elif hit.bounds == [4.0, 6.0, 2.0, 4.0]:
+                assert hit.object == ("a_2", "b_3")
+            else:
+                assert False
+
+    def test_intersection_mismatch(
+        self, index_a_interleaved: index.Index, index_b_uninterleaved: index.Index
+    ) -> None:
+        with pytest.raises(AssertionError):
+            index_a_interleaved & index_b_uninterleaved
+
+    def test_union_interleaved(
+        self, index_a_interleaved: index.Index, index_b_interleaved: index.Index
+    ) -> None:
+        index_c_interleaved = index_a_interleaved | index_b_interleaved
+        assert index_c_interleaved.interleaved
+        assert len(index_c_interleaved) == 4
+        for hit in index_c_interleaved.intersection(
+            index_c_interleaved.bounds, objects=True
+        ):
+            if hit.bbox == [3.0, 3.0, 5.0, 5.0]:
+                assert hit.object == "a_1"
+            elif hit.bbox == [4.0, 2.0, 6.0, 4.0]:
+                assert hit.object == "a_2"
+            elif hit.bbox == [2.0, 1.0, 7.0, 6.0]:
+                assert hit.object == "b_3"
+            elif hit.bbox == [8.0, 7.0, 9.0, 8.0]:
+                assert hit.object == "b_4"
+            else:
+                assert False
+
+    def test_union_uninterleaved(
+        self, index_a_uninterleaved: index.Index, index_b_uninterleaved: index.Index
+    ) -> None:
+        index_c_uninterleaved = index_a_uninterleaved | index_b_uninterleaved
+        assert not index_c_uninterleaved.interleaved
+        assert len(index_c_uninterleaved) == 4
+        for hit in index_c_uninterleaved.intersection(
+            index_c_uninterleaved.bounds, objects=True
+        ):
+            if hit.bounds == [3.0, 5.0, 3.0, 5.0]:
+                assert hit.object == "a_1"
+            elif hit.bounds == [4.0, 6.0, 2.0, 4.0]:
+                assert hit.object == "a_2"
+            elif hit.bounds == [2.0, 7.0, 1.0, 6.0]:
+                assert hit.object == "b_3"
+            elif hit.bounds == [8.0, 9.0, 7.0, 8.0]:
+                assert hit.object == "b_4"
+            else:
+                assert False
+
+    def test_union_mismatch(
+        self, index_a_interleaved: index.Index, index_b_uninterleaved: index.Index
+    ) -> None:
+        with pytest.raises(AssertionError):
+            index_a_interleaved | index_b_uninterleaved
+
+
 class IndexSerialization(unittest.TestCase):
+    def setUp(self) -> None:
+        self.boxes15 = np.genfromtxt("boxes_15x15.data")
 
-    def setUp(self):
-        self.boxes15 = np.genfromtxt('boxes_15x15.data')
-
-    def boxes15_stream(self, interleaved=True):
+    def boxes15_stream(
+        self, interleaved: bool = True
+    ) -> Iterator[Tuple[int, Tuple[float, float, float, float], int]]:
         for i, (minx, miny, maxx, maxy) in enumerate(self.boxes15):
             if interleaved:
                 yield (i, (minx, miny, maxx, maxy), 42)
             else:
                 yield (i, (minx, maxx, miny, maxy), 42)
 
-    def test_unicode_filenames(self):
+    def test_unicode_filenames(self) -> None:
         """Unicode filenames work as expected"""
-        if sys.version_info.major < 3:
-            return
         tname = tempfile.mktemp()
-        filename = tname + u'gilename\u4500abc'
+        filename = tname + "gilename\u4500abc"
         idx = index.Index(filename)
         idx.insert(
-            4321,
-            (34.3776829412,
-             26.7375853734,
-             49.3776829412,
-             41.7375853734),
-            obj=42)
+            4321, (34.3776829412, 26.7375853734, 49.3776829412, 41.7375853734), obj=42
+        )
 
-    def test_pickling(self):
+    def test_pickling(self) -> None:
         """Pickling works as expected"""
 
         idx = index.Index()
@@ -296,20 +418,23 @@ class IndexSerialization(unittest.TestCase):
 
         some_data = {"a": 22, "b": [1, "ccc"]}
 
-        idx.dumps = lambda obj: json.dumps(obj).encode('utf-8')
-        idx.loads = lambda string: json.loads(string.decode('utf-8'))
+        # https://github.com/python/mypy/issues/2427
+        idx.dumps = lambda obj: json.dumps(obj).encode(  # type: ignore[assignment]
+            "utf-8"
+        )
+        idx.loads = lambda string: json.loads(  # type: ignore[assignment]
+            string.decode("utf-8")
+        )
+
         idx.add(0, (0, 0, 1, 1), some_data)
 
-        self.assertEqual(
-            list(
-                idx.nearest(
-                    (0, 0), 1, objects="raw"))[0], some_data)
+        self.assertEqual(list(idx.nearest((0, 0), 1, objects="raw"))[0], some_data)
 
-    def test_custom_filenames(self):
+    def test_custom_filenames(self) -> None:
         """Test using custom filenames for index serialization"""
         p = index.Property()
-        p.dat_extension = 'data'
-        p.idx_extension = 'index'
+        p.dat_extension = "data"
+        p.idx_extension = "index"
         tname = tempfile.mktemp()
         idx = index.Index(tname, properties=p)
         for i, coords in enumerate(self.boxes15):
@@ -326,47 +451,156 @@ class IndexSerialization(unittest.TestCase):
         self.assertTrue(len(hits), 10)
         self.assertEqual(hits, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
 
-    def test_interleaving(self):
+    def test_interleaving(self) -> None:
         """Streaming against a persisted index without interleaving"""
-        def data_gen(interleaved=True):
+
+        def data_gen(
+            interleaved: bool = True,
+        ) -> Iterator[Tuple[int, Tuple[float, float, float, float], int]]:
             for i, (minx, miny, maxx, maxy) in enumerate(self.boxes15):
                 if interleaved:
                     yield (i, (minx, miny, maxx, maxy), 42)
                 else:
                     yield (i, (minx, maxx, miny, maxy), 42)
+
         p = index.Property()
         tname = tempfile.mktemp()
-        idx = index.Index(tname,
-                          data_gen(interleaved=False),
-                          properties=p,
-                          interleaved=False)
-        hits = sorted(list(idx.intersection((0, 60, 0, 60))))
-        self.assertTrue(len(hits), 10)
-        self.assertEqual(hits, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
+        idx = index.Index(
+            tname, data_gen(interleaved=False), properties=p, interleaved=False
+        )
+        hits1 = sorted(list(idx.intersection((0, 60, 0, 60))))
+        self.assertTrue(len(hits1), 10)
+        self.assertEqual(hits1, [0, 4, 16, 27, 35, 40, 47, 50, 76, 80])
 
         leaves = idx.leaves()
         expected = [
-            (0, [2, 92, 51, 55, 26, 95, 7, 81, 38, 22, 58, 89, 91, 83, 98, 37,
-                 70, 31, 49, 34, 11, 6, 13, 3, 23, 57, 9, 96, 84, 36, 5, 45,
-                 77, 78, 44, 12, 42, 73, 93, 41, 71, 17, 39, 54, 88, 72, 97,
-                 60, 62, 48, 19, 25, 76, 59, 66, 64, 79, 94, 40, 32, 46, 47,
-                 15, 68, 10, 0, 80, 56, 50, 30],
-             [-186.673789279, -96.7177218184, 172.392784956, 45.4856075292]),
-            (2, [61, 74, 29, 99, 16, 43, 35, 33, 27, 63, 18, 90, 8, 53, 82,
-                 21, 65, 24, 4, 1, 75, 67, 86, 52, 28, 85, 87, 14, 69, 20],
-             [-174.739939684, 32.6596016791, 184.761387556, 96.6043699778])]
+            (
+                0,
+                [
+                    2,
+                    92,
+                    51,
+                    55,
+                    26,
+                    95,
+                    7,
+                    81,
+                    38,
+                    22,
+                    58,
+                    89,
+                    91,
+                    83,
+                    98,
+                    37,
+                    70,
+                    31,
+                    49,
+                    34,
+                    11,
+                    6,
+                    13,
+                    3,
+                    23,
+                    57,
+                    9,
+                    96,
+                    84,
+                    36,
+                    5,
+                    45,
+                    77,
+                    78,
+                    44,
+                    12,
+                    42,
+                    73,
+                    93,
+                    41,
+                    71,
+                    17,
+                    39,
+                    54,
+                    88,
+                    72,
+                    97,
+                    60,
+                    62,
+                    48,
+                    19,
+                    25,
+                    76,
+                    59,
+                    66,
+                    64,
+                    79,
+                    94,
+                    40,
+                    32,
+                    46,
+                    47,
+                    15,
+                    68,
+                    10,
+                    0,
+                    80,
+                    56,
+                    50,
+                    30,
+                ],
+                [-186.673789279, -96.7177218184, 172.392784956, 45.4856075292],
+            ),
+            (
+                2,
+                [
+                    61,
+                    74,
+                    29,
+                    99,
+                    16,
+                    43,
+                    35,
+                    33,
+                    27,
+                    63,
+                    18,
+                    90,
+                    8,
+                    53,
+                    82,
+                    21,
+                    65,
+                    24,
+                    4,
+                    1,
+                    75,
+                    67,
+                    86,
+                    52,
+                    28,
+                    85,
+                    87,
+                    14,
+                    69,
+                    20,
+                ],
+                [-174.739939684, 32.6596016791, 184.761387556, 96.6043699778],
+            ),
+        ]
 
-        if PY3 and False:
-            # TODO : this reliably fails on Python 2.7 and 3.5
+        if sys.maxsize > 2**32:
+            # TODO: this fails with CPython 3.7 manylinux i686 i.e. 32-bit
             # go through the traversal and see if everything is close
-            assert all(all(np.allclose(a, b) for a, b in zip(L, E))
-                       for L, E in zip(leaves, expected))
+            assert all(
+                all(np.allclose(a, b) for a, b in zip(L, E))
+                for L, E in zip(leaves, expected)
+            )
 
-        hits = sorted(list(idx.intersection((0, 60, 0, 60), objects=True)))
-        self.assertTrue(len(hits), 10)
-        self.assertEqual(hits[0].object, 42)
+        hits2 = sorted(list(idx.intersection((0, 60, 0, 60), objects=True)))
+        self.assertTrue(len(hits2), 10)
+        self.assertEqual(hits2[0].object, 42)
 
-    def test_overwrite(self):
+    def test_overwrite(self) -> None:
         """Index overwrite works as expected"""
         tname = tempfile.mktemp()
 
@@ -377,8 +611,7 @@ class IndexSerialization(unittest.TestCase):
 
 
 class IndexNearest(IndexTestCase):
-
-    def test_nearest_basic(self):
+    def test_nearest_basic(self) -> None:
         """Test nearest basic selection of records"""
         hits = list(self.idx.nearest((0, 0, 10, 10), 3))
         self.assertEqual(hits, [76, 48, 19])
@@ -390,7 +623,7 @@ class IndexNearest(IndexTestCase):
         hits = sorted(idx.nearest((13, 0, 20, 2), 3))
         self.assertEqual(hits, [3, 4, 5])
 
-    def test_nearest_equidistant(self):
+    def test_nearest_equidistant(self) -> None:
         """Test that if records are equidistant, both are returned."""
         point = (0, 0)
         small_box = (-10, -10, 10, 10)
@@ -423,22 +656,21 @@ class IndexNearest(IndexTestCase):
         self.assertEqual(list(idx.nearest(point, 2)), [2, 1])
         self.assertEqual(list(idx.nearest(point, 1)), [2])
 
-    def test_nearest_object(self):
+    def test_nearest_object(self) -> None:
         """Test nearest object selection of records"""
         idx = index.Index()
         locs = [(14, 10, 14, 10), (16, 10, 16, 10)]
         for i, (minx, miny, maxx, maxy) in enumerate(locs):
-            idx.add(i, (minx, miny, maxx, maxy), obj={'a': 42})
+            idx.add(i, (minx, miny, maxx, maxy), obj={"a": 42})
 
         hits = sorted(
-            [(i.id, i.object)
-             for i in idx.nearest((15, 10, 15, 10), 1, objects=True)])
-        self.assertEqual(hits, [(0, {'a': 42}), (1, {'a': 42})])
+            (i.id, i.object) for i in idx.nearest((15, 10, 15, 10), 1, objects=True)
+        )
+        self.assertEqual(hits, [(0, {"a": 42}), (1, {"a": 42})])
 
 
 class IndexDelete(IndexTestCase):
-
-    def test_deletion(self):
+    def test_deletion(self) -> None:
         """Test we can delete data from the index"""
         idx = index.Index()
         for i, coords in enumerate(self.boxes15):
@@ -452,7 +684,7 @@ class IndexDelete(IndexTestCase):
 
 
 class IndexMoreDimensions(IndexTestCase):
-    def test_3d(self):
+    def test_3d(self) -> None:
         """Test we make and query a 3D index"""
         p = index.Property()
         p.dimension = 3
@@ -461,7 +693,7 @@ class IndexMoreDimensions(IndexTestCase):
         hits = idx.intersection((-1, 1, 58, 62, 22, 24))
         self.assertEqual(list(hits), [1])
 
-    def test_4d(self):
+    def test_4d(self) -> None:
         """Test we make and query a 4D index"""
         p = index.Property()
         p.dimension = 4
@@ -472,8 +704,7 @@ class IndexMoreDimensions(IndexTestCase):
 
 
 class IndexStream(IndexTestCase):
-
-    def test_stream_input(self):
+    def test_stream_input(self) -> None:
         p = index.Property()
         sindex = index.Index(self.boxes15_stream(), properties=p)
         bounds = (0, 0, 60, 60)
@@ -484,68 +715,72 @@ class IndexStream(IndexTestCase):
         self.assertEqual(len(objects), 10)
         self.assertEqual(objects[0].object, 42)
 
-    def test_empty_stream(self):
+    def test_empty_stream(self) -> None:
         """Assert empty stream raises exception"""
-        self.assertRaises(core.RTreeError, index.Index, ((x for x in [])))
+        self.assertRaises(RTreeError, index.Index, iter(()))
 
-    def test_exception_in_generator(self):
+    def test_exception_in_generator(self) -> None:
         """Assert exceptions raised in callbacks are raised in main thread"""
+
         class TestException(Exception):
             pass
 
-        def create_index():
-            def gen():
+        def create_index() -> index.Index:
+            def gen() -> Iterator[Tuple[int, Tuple[int, int, int, int], None]]:
                 # insert at least 6 or so before the exception
                 for i in range(10):
                     yield (i, (1, 2, 3, 4), None)
                 raise TestException("raising here")
+
             return index.Index(gen())
 
         self.assertRaises(TestException, create_index)
 
-    def test_exception_at_beginning_of_generator(self):
+    def test_exception_at_beginning_of_generator(self) -> None:
         """
         Assert exceptions raised in callbacks before generator
         function are raised in main thread.
         """
+
         class TestException(Exception):
             pass
 
-        def create_index():
-            def gen():
+        def create_index() -> index.Index:
+            def gen() -> None:
 
                 raise TestException("raising here")
-            return index.Index(gen())
+
+            return index.Index(gen())  # type: ignore[func-returns-value]
 
         self.assertRaises(TestException, create_index)
 
 
 class DictStorage(index.CustomStorage):
-    """ A simple storage which saves the pages in a python dictionary """
+    """A simple storage which saves the pages in a python dictionary"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         index.CustomStorage.__init__(self)
         self.clear()
 
     def create(self, returnError):
-        """ Called when the storage is created on the C side """
+        """Called when the storage is created on the C side"""
 
     def destroy(self, returnError):
-        """ Called when the storage is destroyed on the C side """
+        """Called when the storage is destroyed on the C side"""
 
-    def clear(self):
-        """ Clear all our data """
-        self.dict = {}
+    def clear(self) -> None:
+        """Clear all our data"""
+        self.dict: Dict = {}
 
     def loadByteArray(self, page, returnError):
-        """ Returns the data for page or returns an error """
+        """Returns the data for page or returns an error"""
         try:
             return self.dict[page]
         except KeyError:
             returnError.contents.value = self.InvalidPageError
 
     def storeByteArray(self, page, data, returnError):
-        """ Stores the data for page """
+        """Stores the data for page"""
         if page == self.NewPage:
             newPageId = len(self.dict)
             self.dict[newPageId] = data
@@ -558,7 +793,7 @@ class DictStorage(index.CustomStorage):
             return page
 
     def deleteByteArray(self, page, returnError):
-        """ Deletes a page """
+        """Deletes a page"""
         try:
             del self.dict[page]
         except KeyError:
@@ -569,7 +804,7 @@ class DictStorage(index.CustomStorage):
 
 
 class IndexCustomStorage(unittest.TestCase):
-    def test_custom_storage(self):
+    def test_custom_storage(self) -> None:
         """Custom index storage works as expected"""
         settings = index.Property()
         settings.writethrough = True
@@ -614,7 +849,7 @@ class IndexCustomStorage(unittest.TestCase):
 
         del storage
 
-    def test_custom_storage_reopening(self):
+    def test_custom_storage_reopening(self) -> None:
         """Reopening custom index storage works as expected"""
 
         storage = DictStorage()

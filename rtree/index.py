@@ -1,12 +1,21 @@
+from __future__ import annotations
+
 import ctypes
 import os
 import os.path
+import pickle
 import pprint
+import sys
+import warnings
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union, overload
+
+if sys.version_info >= (3, 8):
+    from typing import Literal
+else:
+    from typing_extensions import Literal
 
 from . import core
-
-import pickle
-
+from .exceptions import RTreeError
 
 RT_Memory = 0
 RT_Disk = 1
@@ -22,14 +31,14 @@ RT_TPRTree = 2
 
 __c_api_version__ = core.rt.SIDX_Version()
 
-major_version, minor_version, patch_version = [
-    int(t) for t in __c_api_version__.decode('utf-8').split('.')]
+major_version, minor_version, patch_version = (
+    int(t) for t in __c_api_version__.decode("utf-8").split(".")
+)
 
-if (major_version < 2 and minor_version < 7):
-    raise Exception(
-        "This version of Rtree requires libspatialindex 1.7.0 or greater")
+if (major_version, minor_version, patch_version) < (1, 8, 5):
+    raise Exception("Rtree requires libspatialindex 1.8.5 or greater")
 
-__all__ = ['Rtree', 'Index', 'Property']
+__all__ = ["Rtree", "Index", "Property"]
 
 
 def _get_bounds(handle, bounds_fn, interleaved):
@@ -38,19 +47,13 @@ def _get_bounds(handle, bounds_fn, interleaved):
     dimension = ctypes.c_uint32(0)
 
     bounds_fn(
-        handle,
-        ctypes.byref(pp_mins),
-        ctypes.byref(pp_maxs),
-        ctypes.byref(dimension))
-    if (dimension.value == 0):
+        handle, ctypes.byref(pp_mins), ctypes.byref(pp_maxs), ctypes.byref(dimension)
+    )
+    if dimension.value == 0:
         return None
 
-    mins = ctypes.cast(
-        pp_mins, ctypes.POINTER(ctypes.c_double * dimension.value)
-    )
-    maxs = ctypes.cast(
-        pp_maxs, ctypes.POINTER(ctypes.c_double * dimension.value)
-    )
+    mins = ctypes.cast(pp_mins, ctypes.POINTER(ctypes.c_double * dimension.value))
+    maxs = ctypes.cast(pp_maxs, ctypes.POINTER(ctypes.c_double * dimension.value))
 
     results = [mins.contents[i] for i in range(dimension.value)]
     results += [maxs.contents[i] for i in range(dimension.value)]
@@ -77,10 +80,10 @@ def _get_data(handle):
     return s
 
 
-class Index(object):
+class Index:
     """An R-Tree, MVR-Tree, or TPR-Tree indexing object"""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Creates a new index
 
         :param filename:
@@ -122,7 +125,7 @@ class Index(object):
             This parameter determines the coordinate order for all methods that
             take in coordinates.
 
-        :param properties: An :class:`index.Property` object
+        :param properties: An :class:`index.Property` object.
             This object sets both the creation and instantiation properties
             for the object and they are passed down into libspatialindex.
             A few properties are curried from instantiation parameters
@@ -196,15 +199,17 @@ class Index(object):
             True
 
         """
-        self.properties = kwargs.get('properties', Property())
+        self.properties = kwargs.get("properties", Property())
 
-        if self.properties.type == RT_TPRTree \
-                and not hasattr(core.rt, 'Index_InsertTPData'):
+        if self.properties.type == RT_TPRTree and not hasattr(
+            core.rt, "Index_InsertTPData"
+        ):
             raise RuntimeError(
-                "TPR-Tree type not supported with version of libspatialindex")
+                "TPR-Tree type not supported with version of libspatialindex"
+            )
 
         # interleaved True gives 'bbox' order.
-        self.interleaved = bool(kwargs.get('interleaved', True))
+        self.interleaved = bool(kwargs.get("interleaved", True))
 
         stream = None
         basename = None
@@ -229,22 +234,21 @@ class Index(object):
             self.properties.filename = basename
 
             # check we can read the file
-            f = basename + "." + self.properties.idx_extension
+            f = str(basename) + "." + self.properties.idx_extension
             p = os.path.abspath(f)
 
             # assume if the file exists, we're not going to overwrite it
             # unless the user explicitly set the property to do so
             if os.path.exists(p):
 
-                self.properties.overwrite = \
-                    bool(kwargs.get('overwrite', False))
+                self.properties.overwrite = bool(kwargs.get("overwrite", False))
 
                 # assume we're fetching the first index_id.  If the user
                 # set it, we'll fetch that one.
                 if not self.properties.overwrite:
                     try:
                         self.properties.index_id
-                    except core.RTreeError:
+                    except RTreeError:
                         self.properties.index_id = 1
 
             d = os.path.dirname(p)
@@ -252,19 +256,13 @@ class Index(object):
                 message = "Unable to open file '%s' for index storage" % f
                 raise OSError(message)
         elif storage:
-            if (major_version < 2 and minor_version < 8):
-                raise core.RTreeError(
-                    "libspatialindex {0} does not support custom storage"
-                    .format(__c_api_version__))
-
             self.properties.storage = RT_Custom
             if storage.hasData:
-                self.properties.overwrite = \
-                    bool(kwargs.get('overwrite', False))
+                self.properties.overwrite = bool(kwargs.get("overwrite", False))
                 if not self.properties.overwrite:
                     try:
                         self.properties.index_id
-                    except core.RTreeError:
+                    except RTreeError:
                         self.properties.index_id = 1
                 else:
                     storage.clear()
@@ -273,7 +271,7 @@ class Index(object):
         else:
             self.properties.storage = RT_Memory
 
-        ps = kwargs.get('pagesize', None)
+        ps = kwargs.get("pagesize", None)
         if ps:
             self.properties.pagesize = int(ps)
 
@@ -288,51 +286,64 @@ class Index(object):
                 for item in stream:
                     self.insert(*item)
 
-    def get_size(self):
+    def get_size(self) -> int:
+        warnings.warn(
+            "index.get_size() is deprecated, use len(index) instead", DeprecationWarning
+        )
+        return len(self)
+
+    def __len__(self) -> int:
+        """The number of entries in the index.
+
+        :return: number of entries
+        """
         try:
             return self.count(self.bounds)
-        except core.RTreeError:
+        except RTreeError:
             return 0
 
-    def __repr__(self):
-        return 'rtree.index.Index(bounds={}, size={})'.format(self.bounds,
-                                                              self.get_size())
+    def __repr__(self) -> str:
+        return "rtree.index.Index(bounds={}, size={})".format(
+            self.bounds, self.get_size()
+        )
 
-    def __getstate__(self):
+    def __getstate__(self) -> Dict[str, Any]:
         state = self.__dict__.copy()
         del state["handle"]
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: Dict[str, Any]) -> None:
         self.__dict__.update(state)
         self.handle = IndexHandle(self.properties.handle)
 
-    def dumps(self, obj):
+    def dumps(self, obj: object) -> bytes:
         return pickle.dumps(obj)
 
-    def loads(self, string):
+    def loads(self, string: bytes) -> object:
         return pickle.loads(string)
 
-    def close(self):
+    def close(self) -> None:
         """Force a flush of the index to storage. Renders index
         inaccessible."""
         if self.handle:
             self.handle.destroy()
             self.handle = None
         else:
-            raise IOError("Unclosable index")
+            raise OSError("Unclosable index")
 
-    def flush(self):
+    def flush(self) -> None:
         """Force a flush of the index to storage."""
         if self.handle:
             self.handle.flush()
 
-    def get_coordinate_pointers(self, coordinates):
+    def get_coordinate_pointers(
+        self, coordinates: Sequence[float]
+    ) -> Tuple[float, float]:
 
         try:
             iter(coordinates)
         except TypeError:
-            raise TypeError('Bounds must be a sequence')
+            raise TypeError("Bounds must be a sequence")
         dimension = self.properties.dimension
 
         mins = ctypes.c_double * dimension
@@ -343,33 +354,33 @@ class Index(object):
 
         # it's a point make it into a bbox. [x, y] => [x, y, x, y]
         if len(coordinates) == dimension:
-            coordinates += coordinates
+            coordinates = *coordinates, *coordinates
 
         if len(coordinates) != dimension * 2:
-            raise core.RTreeError(
+            raise RTreeError(
                 "Coordinates must be in the form "
-                "(minx, miny, maxx, maxy) or (x, y) for 2D indexes")
+                "(minx, miny, maxx, maxy) or (x, y) for 2D indexes"
+            )
 
         # so here all coords are in the form:
         # [xmin, ymin, zmin, xmax, ymax, zmax]
         for i in range(dimension):
             if not coordinates[i] <= coordinates[i + dimension]:
-                raise core.RTreeError(
-                    "Coordinates must not have minimums more than maximums")
+                raise RTreeError(
+                    "Coordinates must not have minimums more than maximums"
+                )
 
-        p_mins = mins(
-            *[ctypes.c_double(coordinates[i]) for i in range(dimension)])
+        p_mins = mins(*[ctypes.c_double(coordinates[i]) for i in range(dimension)])
         p_maxs = maxs(
-            *[ctypes.c_double(coordinates[i + dimension])
-              for i in range(dimension)])
+            *[ctypes.c_double(coordinates[i + dimension]) for i in range(dimension)]
+        )
 
         return (p_mins, p_maxs)
 
     @staticmethod
     def _get_time_doubles(times):
         if times[0] > times[1]:
-            raise core.RTreeError(
-                "Start time must be less than end time")
+            raise RTreeError("Start time must be less than end time")
         t_start = ctypes.c_double(times[0])
         t_end = ctypes.c_double(times[1])
         return t_start, t_end
@@ -390,6 +401,7 @@ class Index(object):
 
     def get_result_limit(self):
         return core.rt.Index_GetResultSetOffset(self.handle)
+
     result_limit = property(get_result_limit, set_result_limit)
 
     def set_result_offset(self, value):
@@ -397,18 +409,17 @@ class Index(object):
 
     def get_result_offset(self):
         return core.rt.Index_GetResultSetLimit(self.handle)
+
     result_offset = property(get_result_offset, set_result_offset)
 
-    def insert(self, id, coordinates, obj=None):
+    def insert(self, id: int, coordinates: Any, obj: object = None) -> None:
         """Inserts an item into the index with the given coordinates.
 
-        :param id: long integer
-            A long integer that is the identifier for this index entry.  IDs
+        :param id: A long integer that is the identifier for this index entry.  IDs
             need not be unique to be inserted into the index, and it is up
             to the user to ensure they are unique if this is a requirement.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -445,7 +456,8 @@ class Index(object):
 
         """
         if self.properties.type == RT_TPRTree:
-            return self._insertTP(id, *coordinates, obj=obj)
+            # https://github.com/python/mypy/issues/6799
+            return self._insertTP(id, *coordinates, obj=obj)  # type: ignore[misc]
 
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
         data = ctypes.c_ubyte(0)
@@ -453,11 +465,20 @@ class Index(object):
         pyserialized = None
         if obj is not None:
             size, data, pyserialized = self._serialize(obj)
-        core.rt.Index_InsertData(self.handle, id, p_mins, p_maxs,
-                                 self.properties.dimension, data, size)
+        core.rt.Index_InsertData(
+            self.handle, id, p_mins, p_maxs, self.properties.dimension, data, size
+        )
+
     add = insert
 
-    def _insertTP(self, id, coordinates, velocities, time, obj=None):
+    def _insertTP(
+        self,
+        id: int,
+        coordinates: Sequence[float],
+        velocities: Sequence[float],
+        time: float,
+        obj: object = None,
+    ) -> None:
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
         pv_mins, pv_maxs = self.get_coordinate_pointers(velocities)
         # End time isn't used
@@ -466,15 +487,24 @@ class Index(object):
         size = 0
         if obj is not None:
             size, data, _ = self._serialize(obj)
-        core.rt.Index_InsertTPData(self.handle, id, p_mins, p_maxs,
-                                   pv_mins, pv_maxs, t_start, t_end,
-                                   self.properties.dimension, data, size)
+        core.rt.Index_InsertTPData(
+            self.handle,
+            id,
+            p_mins,
+            p_maxs,
+            pv_mins,
+            pv_maxs,
+            t_start,
+            t_end,
+            self.properties.dimension,
+            data,
+            size,
+        )
 
-    def count(self, coordinates):
+    def count(self, coordinates: Any) -> int:
         """Return number of objects that intersect the given coordinates.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -519,45 +549,65 @@ class Index(object):
 
         p_num_results = ctypes.c_uint64(0)
 
-        core.rt.Index_Intersects_count(self.handle,
-                                       p_mins,
-                                       p_maxs,
-                                       self.properties.dimension,
-                                       ctypes.byref(p_num_results))
+        core.rt.Index_Intersects_count(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(p_num_results),
+        )
 
         return p_num_results.value
 
-    def _countTP(self, coordinates, velocities, times):
+    def _countTP(
+        self, coordinates: Sequence[float], velocities: Sequence[float], times: float
+    ) -> int:
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
         pv_mins, pv_maxs = self.get_coordinate_pointers(velocities)
         t_start, t_end = self._get_time_doubles(times)
 
         p_num_results = ctypes.c_uint64(0)
 
-        core.rt.Index_TPIntersects_count(self.handle,
-                                         p_mins,
-                                         p_maxs,
-                                         pv_mins,
-                                         pv_maxs,
-                                         t_start,
-                                         t_end,
-                                         self.properties.dimension,
-                                         ctypes.byref(p_num_results))
+        core.rt.Index_TPIntersects_count(
+            self.handle,
+            p_mins,
+            p_maxs,
+            pv_mins,
+            pv_maxs,
+            t_start,
+            t_end,
+            self.properties.dimension,
+            ctypes.byref(p_num_results),
+        )
 
         return p_num_results.value
 
-    def contains(self, coordinates, objects=False):
+    @overload
+    def contains(self, coordinates: Any, objects: Literal[True]) -> Iterator[Item]:
+        ...
+
+    @overload
+    def contains(
+        self, coordinates: Any, objects: Literal[False] = False
+    ) -> Optional[Iterator[int]]:
+        ...
+
+    @overload
+    def contains(self, coordinates: Any, objects: Literal["raw"]) -> Iterator[object]:
+        ...
+
+    def contains(
+        self, coordinates: Any, objects: Union[bool, Literal["raw"]] = False
+    ) -> Optional[Iterator[Union[Item, int, object]]]:
         """Return ids or objects in the index that contains within the given
         coordinates.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
 
-        :param objects: True or False or 'raw'
-            If True, the intersection method will return index objects that
+        :param objects: If True, the intersection method will return index objects that
             were pickled when they were stored with each index entry, as well
             as the id and bounds of the index entries. If 'raw', the objects
             will be returned without the :class:`rtree.index.Item` wrapper.
@@ -603,20 +653,107 @@ class Index(object):
         except AttributeError:
             return None
 
-        core.rt.Index_Contains_id(self.handle,
-                                  p_mins,
-                                  p_maxs,
-                                  self.properties.dimension,
-                                  ctypes.byref(it),
-                                  ctypes.byref(p_num_results))
+        core.rt.Index_Contains_id(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(it),
+            ctypes.byref(p_num_results),
+        )
         return self._get_ids(it, p_num_results.value)
 
-    def intersection(self, coordinates, objects=False):
+    def __and__(self, other: Index) -> Index:
+        """Take the intersection of two Index objects.
+
+        :param other: another index
+        :return: a new index
+        :raises AssertionError: if self and other have different interleave or dimension
+        """
+        assert self.interleaved == other.interleaved
+        assert self.properties.dimension == other.properties.dimension
+
+        i = 0
+        new_idx = Index(interleaved=self.interleaved, properties=self.properties)
+
+        # For each Item in self...
+        for item1 in self.intersection(self.bounds, objects=True):
+            if self.interleaved:
+                # For each Item in other that intersects...
+                for item2 in other.intersection(item1.bbox, objects=True):
+                    # Compute the intersection bounding box
+                    bbox = []
+                    for j in range(len(item1.bbox)):
+                        if j < len(item1.bbox) // 2:
+                            bbox.append(max(item1.bbox[j], item2.bbox[j]))
+                        else:
+                            bbox.append(min(item1.bbox[j], item2.bbox[j]))
+
+                    new_idx.insert(i, bbox, (item1.object, item2.object))
+                    i += 1
+
+            else:
+                # For each Item in other that intersects...
+                for item2 in other.intersection(item1.bounds, objects=True):
+                    # Compute the intersection bounding box
+                    bounds = []
+                    for j in range(len(item1.bounds)):
+                        if j % 2 == 0:
+                            bounds.append(max(item1.bounds[j], item2.bounds[j]))
+                        else:
+                            bounds.append(min(item1.bounds[j], item2.bounds[j]))
+
+                    new_idx.insert(i, bounds, (item1.object, item2.object))
+                    i += 1
+
+        return new_idx
+
+    def __or__(self, other: Index) -> Index:
+        """Take the union of two Index objects.
+
+        :param other: another index
+        :return: a new index
+        :raises AssertionError: if self and other have different interleave or dimension
+        """
+        assert self.interleaved == other.interleaved
+        assert self.properties.dimension == other.properties.dimension
+
+        new_idx = Index(interleaved=self.interleaved, properties=self.properties)
+
+        # For each index...
+        for old_idx in [self, other]:
+            # For each item...
+            for item in old_idx.intersection(old_idx.bounds, objects=True):
+                if self.interleaved:
+                    new_idx.insert(item.id, item.bbox, item.object)
+                else:
+                    new_idx.insert(item.id, item.bounds, item.object)
+
+        return new_idx
+
+    @overload
+    def intersection(self, coordinates: Any, objects: Literal[True]) -> Iterator[Item]:
+        ...
+
+    @overload
+    def intersection(
+        self, coordinates: Any, objects: Literal[False] = False
+    ) -> Iterator[int]:
+        ...
+
+    @overload
+    def intersection(
+        self, coordinates: Any, objects: Literal["raw"]
+    ) -> Iterator[object]:
+        ...
+
+    def intersection(
+        self, coordinates: Any, objects: Union[bool, Literal["raw"]] = False
+    ) -> Iterator[Union[Item, int, object]]:
         """Return ids or objects in the index that intersect the given
         coordinates.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -625,8 +762,7 @@ class Index(object):
             velocity pairs `minvk` and `maxvk` and a time pair for the
             time range as a float.
 
-        :param objects: True or False or 'raw'
-            If True, the intersection method will return index objects that
+        :param objects: If True, the intersection method will return index objects that
             were pickled when they were stored with each index entry, as well
             as the id and bounds of the index entries. If 'raw', the objects
             will be returned without the :class:`rtree.index.Item` wrapper.
@@ -675,7 +811,10 @@ class Index(object):
 
         """
         if self.properties.type == RT_TPRTree:
-            return self._intersectionTP(*coordinates, objects=objects)
+            # https://github.com/python/mypy/issues/6799
+            return self._intersectionTP(  # type: ignore[misc]
+                *coordinates, objects=objects
+            )
         if objects:
             return self._intersection_obj(coordinates, objects)
 
@@ -685,12 +824,14 @@ class Index(object):
 
         it = ctypes.pointer(ctypes.c_int64())
 
-        core.rt.Index_Intersects_id(self.handle,
-                                    p_mins,
-                                    p_maxs,
-                                    self.properties.dimension,
-                                    ctypes.byref(it),
-                                    ctypes.byref(p_num_results))
+        core.rt.Index_Intersects_id(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(it),
+            ctypes.byref(p_num_results),
+        )
         return self._get_ids(it, p_num_results.value)
 
     def _intersectionTP(self, coordinates, velocities, times, objects=False):
@@ -708,9 +849,18 @@ class Index(object):
             call = core.rt.Index_TPIntersects_id
             it = ctypes.pointer(ctypes.c_int64())
 
-        call(self.handle, p_mins, p_maxs, pv_mins, pv_maxs, t_start, t_end,
-             self.properties.dimension, ctypes.byref(it),
-             ctypes.byref(p_num_results))
+        call(
+            self.handle,
+            p_mins,
+            p_maxs,
+            pv_mins,
+            pv_maxs,
+            t_start,
+            t_end,
+            self.properties.dimension,
+            ctypes.byref(it),
+            ctypes.byref(p_num_results),
+        )
 
         if objects:
             return self._get_objects(it, p_num_results.value, objects)
@@ -725,15 +875,17 @@ class Index(object):
 
         it = ctypes.pointer(ctypes.c_void_p())
 
-        core.rt.Index_Intersects_obj(self.handle,
-                                     p_mins,
-                                     p_maxs,
-                                     self.properties.dimension,
-                                     ctypes.byref(it),
-                                     ctypes.byref(p_num_results))
+        core.rt.Index_Intersects_obj(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(it),
+            ctypes.byref(p_num_results),
+        )
         return self._get_objects(it, p_num_results.value, objects)
 
-    def _contains_obj(self, coordinates, objects):
+    def _contains_obj(self, coordinates: Any, objects):
 
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
 
@@ -746,23 +898,25 @@ class Index(object):
         except AttributeError:
             return None
 
-        core.rt.Index_Contains_obj(self.handle,
-                                   p_mins,
-                                   p_maxs,
-                                   self.properties.dimension,
-                                   ctypes.byref(it),
-                                   ctypes.byref(p_num_results))
+        core.rt.Index_Contains_obj(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(it),
+            ctypes.byref(p_num_results),
+        )
         return self._get_objects(it, p_num_results.value, objects)
 
     def _get_objects(self, it, num_results, objects):
         # take the pointer, yield the result objects and free
         items = ctypes.cast(
-            it, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p * num_results)))
-        its = ctypes.cast(
-            items, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))
+            it, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p * num_results))
+        )
+        its = ctypes.cast(items, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))
 
         try:
-            if objects != 'raw':
+            if objects != "raw":
                 for i in range(num_results):
                     yield Item(self.loads, items[i])
             else:
@@ -799,20 +953,44 @@ class Index(object):
 
         it = ctypes.pointer(ctypes.c_void_p())
 
-        core.rt.Index_NearestNeighbors_obj(self.handle,
-                                           p_mins,
-                                           p_maxs,
-                                           self.properties.dimension,
-                                           ctypes.byref(it),
-                                           p_num_results)
+        core.rt.Index_NearestNeighbors_obj(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(it),
+            p_num_results,
+        )
 
         return self._get_objects(it, p_num_results.contents.value, objects)
 
-    def nearest(self, coordinates, num_results=1, objects=False):
+    @overload
+    def nearest(
+        self, coordinates: Any, num_results: int, objects: Literal[True]
+    ) -> Iterator[Item]:
+        ...
+
+    @overload
+    def nearest(
+        self, coordinates: Any, num_results: int, objects: Literal[False] = False
+    ) -> Iterator[int]:
+        ...
+
+    @overload
+    def nearest(
+        self, coordinates: Any, num_results: int, objects: Literal["raw"]
+    ) -> Iterator[object]:
+        ...
+
+    def nearest(
+        self,
+        coordinates: Any,
+        num_results: int = 1,
+        objects: Union[bool, Literal["raw"]] = False,
+    ) -> Iterator[Union[Item, int, object]]:
         """Returns the ``k``-nearest objects to the given coordinates.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -821,14 +999,12 @@ class Index(object):
             velocity pairs `minvk` and `maxvk` and a time pair for the
             time range as a float.
 
-        :param num_results: integer
-            The number of results to return nearest to the given coordinates.
-            If two index entries are equidistant, *both* are returned.
+        :param num_results: The number of results to return nearest to the given
+            coordinates. If two index entries are equidistant, *both* are returned.
             This property means that :attr:`num_results` may return more
             items than specified
 
-        :param objects: True / False / 'raw'
-            If True, the nearest method will return index objects that
+        :param objects: If True, the nearest method will return index objects that
             were pickled when they were stored with each index entry, as
             well as the id and bounds of the index entries.
             If 'raw', it will return the object as entered into the database
@@ -845,7 +1021,8 @@ class Index(object):
             >>> hits = idx.nearest((0, 0, 10, 10), 3, objects=True)
         """
         if self.properties.type == RT_TPRTree:
-            return self._nearestTP(*coordinates, objects=objects)
+            # https://github.com/python/mypy/issues/6799
+            return self._nearestTP(*coordinates, objects=objects)  # type: ignore[misc]
 
         if objects:
             return self._nearest_obj(coordinates, num_results, objects)
@@ -863,21 +1040,18 @@ class Index(object):
 
         it = ctypes.pointer(ctypes.c_int64())
 
-        core.rt.Index_NearestNeighbors_id(self.handle,
-                                          p_mins,
-                                          p_maxs,
-                                          self.properties.dimension,
-                                          ctypes.byref(it),
-                                          p_num_results)
+        core.rt.Index_NearestNeighbors_id(
+            self.handle,
+            p_mins,
+            p_maxs,
+            self.properties.dimension,
+            ctypes.byref(it),
+            p_num_results,
+        )
 
         return self._get_ids(it, p_num_results.contents.value)
 
-    def _nearestTP(self,
-                   coordinates,
-                   velocities,
-                   times,
-                   num_results=1,
-                   objects=False):
+    def _nearestTP(self, coordinates, velocities, times, num_results=1, objects=False):
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
         pv_mins, pv_maxs = self.get_coordinate_pointers(velocities)
         t_start, t_end = self._get_time_doubles(times)
@@ -891,8 +1065,18 @@ class Index(object):
             it = ctypes.pointer(ctypes.c_int64())
             call = core.rt.Index_TPNearestNeighbors_id
 
-        call(self.handle, p_mins, p_maxs, pv_mins, pv_maxs, t_start, t_end,
-             self.properties.dimension, ctypes.byref(it), p_num_results)
+        call(
+            self.handle,
+            p_mins,
+            p_maxs,
+            pv_mins,
+            pv_maxs,
+            t_start,
+            t_end,
+            self.properties.dimension,
+            ctypes.byref(it),
+            p_num_results,
+        )
 
         if objects:
             return self._get_objects(it, p_num_results.contents.value, objects)
@@ -911,25 +1095,23 @@ class Index(object):
         """
         if coordinate_interleaved is None:
             coordinate_interleaved = self.interleaved
-        return _get_bounds(
-            self.handle, core.rt.Index_GetBounds, coordinate_interleaved)
+        return _get_bounds(self.handle, core.rt.Index_GetBounds, coordinate_interleaved)
+
     bounds = property(get_bounds)
 
-    def delete(self, id, coordinates):
+    def delete(self, id: int, coordinates: Any) -> None:
         """Deletes an item from the index with the given ``'id'`` and
            coordinates given by the ``coordinates`` sequence. As the index can
            contain multiple items with the same ID and coordinates, deletion
            is not guaranteed to delete all items in the index with the given ID
            and coordinates.
 
-        :param id: long integer
-            A long integer ID for the entry, which need not be unique. The
+        :param id: A long integer ID for the entry, which need not be unique. The
             index can contain multiple entries with identical IDs and
             coordinates. Uniqueness of items should be enforced at the
             application level by the user.
 
-        :param coordinates: sequence or array
-            Dimension * 2 coordinate pairs, representing the min
+        :param coordinates: Dimension * 2 coordinate pairs, representing the min
             and max coordinates in each dimension of the item to be
             deleted from the index. Their ordering will depend on the
             index's :attr:`interleaved` data member.
@@ -966,24 +1148,39 @@ class Index(object):
             return self._deleteTP(id, *coordinates)
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
         core.rt.Index_DeleteData(
-            self.handle, id, p_mins, p_maxs, self.properties.dimension)
+            self.handle, id, p_mins, p_maxs, self.properties.dimension
+        )
 
-    def _deleteTP(self, id, coordinates, velocities, times):
+    def _deleteTP(
+        self,
+        id: int,
+        coordinates: Sequence[float],
+        velocities: Sequence[float],
+        times: float,
+    ) -> None:
         p_mins, p_maxs = self.get_coordinate_pointers(coordinates)
         pv_mins, pv_maxs = self.get_coordinate_pointers(velocities)
         t_start, t_end = self._get_time_doubles(times)
         core.rt.Index_DeleteTPData(
-            self.handle, id, p_mins, p_maxs, pv_mins, pv_maxs, t_start, t_end,
-            self.properties.dimension)
+            self.handle,
+            id,
+            p_mins,
+            p_maxs,
+            pv_mins,
+            pv_maxs,
+            t_start,
+            t_end,
+            self.properties.dimension,
+        )
 
-    def valid(self):
+    def valid(self) -> bool:
         return bool(core.rt.Index_IsValid(self.handle))
 
     def clearBuffer(self):
         return core.rt.Index_ClearBuffer(self.handle)
 
     @classmethod
-    def deinterleave(self, interleaved):
+    def deinterleave(self, interleaved: Sequence[object]) -> List[object]:
         """
         [xmin, ymin, xmax, ymax] => [xmin, xmax, ymin, ymax]
 
@@ -994,7 +1191,7 @@ class Index(object):
         [0, 10, 1, 11, 2, 12]
 
         """
-        assert len(interleaved) % 2 == 0, ("must be a pairwise list")
+        assert len(interleaved) % 2 == 0, "must be a pairwise list"
         dimension = len(interleaved) // 2
         di = []
         for i in range(dimension):
@@ -1002,7 +1199,7 @@ class Index(object):
         return di
 
     @classmethod
-    def interleave(self, deinterleaved):
+    def interleave(self, deinterleaved: Sequence[float]) -> List[float]:
         """
         [xmin, xmax, ymin, ymax, zmin, zmax]
             => [xmin, ymin, zmin, xmax, ymax, zmax]
@@ -1017,12 +1214,13 @@ class Index(object):
         [-1, 58, 22, 1, 62, 24]
 
         """
-        assert len(deinterleaved) % 2 == 0, ("must be a pairwise list")
+        assert len(deinterleaved) % 2 == 0, "must be a pairwise list"
         #  dimension = len(deinterleaved) / 2
         interleaved = []
         for i in range(2):
-            interleaved.extend([deinterleaved[i + j]
-                                for j in range(0, len(deinterleaved), 2)])
+            interleaved.extend(
+                [deinterleaved[i + j] for j in range(0, len(deinterleaved), 2)]
+            )
         return interleaved
 
     def _create_idx_from_stream(self, stream):
@@ -1034,8 +1232,9 @@ class Index(object):
         darray = ctypes.c_double * dimension
         mins = darray()
         maxs = darray()
-        no_data = ctypes.cast(ctypes.pointer(ctypes.c_ubyte(0)),
-                              ctypes.POINTER(ctypes.c_ubyte))
+        no_data = ctypes.cast(
+            ctypes.pointer(ctypes.c_ubyte(0)), ctypes.POINTER(ctypes.c_ubyte)
+        )
 
         def py_next_item(p_id, p_mins, p_maxs, p_dimension, p_data, p_length):
             """This function must fill pointers to individual entries that will
@@ -1088,38 +1287,39 @@ class Index(object):
         pp_maxs = ctypes.pointer(ctypes.pointer(ctypes.c_double()))
         dimension = ctypes.c_uint32(0)
 
-        core.rt.Index_GetLeaves(self.handle,
-                                ctypes.byref(leaf_node_count),
-                                ctypes.byref(p_leafsizes),
-                                ctypes.byref(p_leafids),
-                                ctypes.byref(pp_childids),
-                                ctypes.byref(pp_mins),
-                                ctypes.byref(pp_maxs),
-                                ctypes.byref(dimension)
-                                )
+        core.rt.Index_GetLeaves(
+            self.handle,
+            ctypes.byref(leaf_node_count),
+            ctypes.byref(p_leafsizes),
+            ctypes.byref(p_leafids),
+            ctypes.byref(pp_childids),
+            ctypes.byref(pp_mins),
+            ctypes.byref(pp_maxs),
+            ctypes.byref(dimension),
+        )
 
         output = []
 
         count = leaf_node_count.value
-        sizes = ctypes.cast(
-            p_leafsizes, ctypes.POINTER(ctypes.c_uint32 * count))
+        sizes = ctypes.cast(p_leafsizes, ctypes.POINTER(ctypes.c_uint32 * count))
         ids = ctypes.cast(p_leafids, ctypes.POINTER(ctypes.c_int64 * count))
         child = ctypes.cast(
-            pp_childids,
-            ctypes.POINTER(ctypes.POINTER(ctypes.c_int64) * count))
+            pp_childids, ctypes.POINTER(ctypes.POINTER(ctypes.c_int64) * count)
+        )
         mins = ctypes.cast(
-            pp_mins,
-            ctypes.POINTER(ctypes.POINTER(ctypes.c_double) * count))
+            pp_mins, ctypes.POINTER(ctypes.POINTER(ctypes.c_double) * count)
+        )
         maxs = ctypes.cast(
-            pp_maxs,
-            ctypes.POINTER(ctypes.POINTER(ctypes.c_double) * count))
+            pp_maxs, ctypes.POINTER(ctypes.POINTER(ctypes.c_double) * count)
+        )
         for i in range(count):
             p_child_ids = child.contents[i]
 
             id = ids.contents[i]
             size = sizes.contents[i]
             child_ids_array = ctypes.cast(
-                p_child_ids, ctypes.POINTER(ctypes.c_int64 * size))
+                p_child_ids, ctypes.POINTER(ctypes.c_int64 * size)
+            )
 
             child_ids = []
             for j in range(size):
@@ -1127,15 +1327,18 @@ class Index(object):
 
             # free the child ids list
             core.rt.Index_Free(
-                ctypes.cast(p_child_ids, ctypes.POINTER(ctypes.c_void_p)))
+                ctypes.cast(p_child_ids, ctypes.POINTER(ctypes.c_void_p))
+            )
 
             p_mins = mins.contents[i]
             p_maxs = maxs.contents[i]
 
             p_mins = ctypes.cast(
-                p_mins, ctypes.POINTER(ctypes.c_double * dimension.value))
+                p_mins, ctypes.POINTER(ctypes.c_double * dimension.value)
+            )
             p_maxs = ctypes.cast(
-                p_maxs, ctypes.POINTER(ctypes.c_double * dimension.value))
+                p_maxs, ctypes.POINTER(ctypes.c_double * dimension.value)
+            )
 
             bounds = []
             bounds = [p_mins.contents[i] for i in range(dimension.value)]
@@ -1144,10 +1347,8 @@ class Index(object):
             # free the bounds
             p_mins = ctypes.cast(p_mins, ctypes.POINTER(ctypes.c_double))
             p_maxs = ctypes.cast(p_maxs, ctypes.POINTER(ctypes.c_double))
-            core.rt.Index_Free(
-                ctypes.cast(p_mins, ctypes.POINTER(ctypes.c_void_p)))
-            core.rt.Index_Free(
-                ctypes.cast(p_maxs, ctypes.POINTER(ctypes.c_void_p)))
+            core.rt.Index_Free(ctypes.cast(p_mins, ctypes.POINTER(ctypes.c_void_p)))
+            core.rt.Index_Free(ctypes.cast(p_maxs, ctypes.POINTER(ctypes.c_void_p)))
 
             output.append((id, child_ids, bounds))
 
@@ -1158,12 +1359,12 @@ class Index(object):
 Rtree = Index
 
 
-class Item(object):
+class Item:
     """A container for index entries"""
 
-    __slots__ = ('handle', 'owned', 'id', 'object', 'bounds')
+    __slots__ = ("handle", "owned", "id", "object", "bounds")
 
-    def __init__(self, loads, handle, owned=False):
+    def __init__(self, loads, handle, owned=False) -> None:
         """There should be no reason to instantiate these yourself. Items are
         created automatically when you call
         :meth:`rtree.index.Index.intersection` (or other index querying
@@ -1178,14 +1379,16 @@ class Item(object):
 
         self.object = None
         self.object = self.get_object(loads)
-        self.bounds = _get_bounds(
-            self.handle, core.rt.IndexItem_GetBounds, False)
+        self.bounds = _get_bounds(self.handle, core.rt.IndexItem_GetBounds, False)
 
-    def __gt__(self, other):
+    def __lt__(self, other: Item) -> bool:
+        return self.id < other.id
+
+    def __gt__(self, other: Item) -> bool:
         return self.id > other.id
 
     @property
-    def bbox(self):
+    def bbox(self) -> List[float]:
         """Returns the bounding box of the index entry"""
         return Index.interleave(self.bounds)
 
@@ -1203,18 +1406,17 @@ class InvalidHandleException(Exception):
     """Handle has been destroyed and can no longer be used"""
 
 
-class Handle(object):
-
-    def __init__(self, *args, **kwargs):
+class Handle:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._ptr = self._create(*args, **kwargs)
 
-    def _create(self, *args, **kwargs):
+    def _create(self, *args: Any, **kwargs: Any):
         raise NotImplementedError
 
     def _destroy(self, ptr):
         raise NotImplementedError
 
-    def destroy(self):
+    def destroy(self) -> None:
         try:
 
             if self._ptr is not None:
@@ -1229,7 +1431,7 @@ class Handle(object):
             raise InvalidHandleException
         return self._ptr
 
-    def __del__(self):
+    def __del__(self) -> None:
         try:
             self.destroy()
         except NameError:
@@ -1245,7 +1447,7 @@ class IndexHandle(Handle):
     _create = core.rt.Index_Create
     _destroy = core.rt.Index_Destroy
 
-    def flush(self):
+    def flush(self) -> None:
         try:
             core.rt.Index_Flush
             if self._ptr is not None:
@@ -1265,60 +1467,77 @@ class PropertyHandle(Handle):
     _destroy = core.rt.IndexProperty_Destroy
 
 
-class Property(object):
+class Property:
     """An index property object is a container that contains a number of
     settable index properties.  Many of these properties must be set at
     index creation times, while others can be used to adjust performance
     or behavior."""
 
     pkeys = (
-        'buffering_capacity', 'custom_storage_callbacks',
-        'custom_storage_callbacks_size', 'dat_extension', 'dimension',
-        'filename', 'fill_factor', 'idx_extension', 'index_capacity',
-        'index_id', 'leaf_capacity', 'near_minimum_overlap_factor',
-        'overwrite', 'pagesize', 'point_pool_capacity',
-        'region_pool_capacity', 'reinsert_factor',
-        'split_distribution_factor', 'storage', 'tight_mbr', 'tpr_horizon',
-        'type', 'variant', 'writethrough')
+        "buffering_capacity",
+        "custom_storage_callbacks",
+        "custom_storage_callbacks_size",
+        "dat_extension",
+        "dimension",
+        "filename",
+        "fill_factor",
+        "idx_extension",
+        "index_capacity",
+        "index_id",
+        "leaf_capacity",
+        "near_minimum_overlap_factor",
+        "overwrite",
+        "pagesize",
+        "point_pool_capacity",
+        "region_pool_capacity",
+        "reinsert_factor",
+        "split_distribution_factor",
+        "storage",
+        "tight_mbr",
+        "tpr_horizon",
+        "type",
+        "variant",
+        "writethrough",
+    )
 
-    def __init__(self, handle=None, owned=True, **kwargs):
+    def __init__(self, handle=None, owned: bool = True, **kwargs: Any) -> None:
         if handle is None:
             handle = PropertyHandle()
         self.handle = handle
         self.initialize_from_dict(kwargs)
 
-    def initialize_from_dict(self, state):
+    def initialize_from_dict(self, state: Dict[str, Any]) -> None:
         for k, v in state.items():
             if v is not None:
                 setattr(self, k, v)
 
-    def __getstate__(self):
+    def __getstate__(self) -> Dict[Any, Any]:
         return self.as_dict()
 
     def __setstate__(self, state):
         self.handle = PropertyHandle()
         self.initialize_from_dict(state)
 
-    def as_dict(self):
+    def as_dict(self) -> Dict[str, Any]:
         d = {}
         for k in self.pkeys:
             try:
                 v = getattr(self, k)
-            except core.RTreeError:
+            except RTreeError:
                 v = None
             d[k] = v
         return d
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return repr(self.as_dict())
 
-    def __str__(self):
+    def __str__(self) -> str:
         return pprint.pformat(self.as_dict())
 
-    def get_index_type(self):
+    def get_index_type(self) -> int:
         return core.rt.IndexProperty_GetIndexType(self.handle)
 
-    def set_index_type(self, value):
+    def set_index_type(self, value: int) -> None:
         return core.rt.IndexProperty_SetIndexType(self.handle, value)
 
     type = property(get_index_type, set_index_type)
@@ -1326,33 +1545,32 @@ class Property(object):
     :data:`RT_RTree`, :data:`RT_MVTree`, or :data:`RT_TPRTree`.  Only
     RT_RTree (the default) is practically supported at this time."""
 
-    def get_variant(self):
+    def get_variant(self) -> int:
         return core.rt.IndexProperty_GetIndexVariant(self.handle)
 
-    def set_variant(self, value):
+    def set_variant(self, value: int) -> None:
         return core.rt.IndexProperty_SetIndexVariant(self.handle, value)
 
     variant = property(get_variant, set_variant)
     """Index variant.  Valid index variant values are
     :data:`RT_Linear`, :data:`RT_Quadratic`, and :data:`RT_Star`"""
 
-    def get_dimension(self):
+    def get_dimension(self) -> int:
         return core.rt.IndexProperty_GetDimension(self.handle)
 
-    def set_dimension(self, value):
-        if (value <= 0):
-            raise core.RTreeError(
-                "Negative or 0 dimensional indexes are not allowed")
+    def set_dimension(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("Negative or 0 dimensional indexes are not allowed")
         return core.rt.IndexProperty_SetDimension(self.handle, value)
 
     dimension = property(get_dimension, set_dimension)
     """Index dimension.  Must be greater than 0, though a dimension of 1 might
     have undefined behavior."""
 
-    def get_storage(self):
+    def get_storage(self) -> int:
         return core.rt.IndexProperty_GetIndexStorage(self.handle)
 
-    def set_storage(self, value):
+    def set_storage(self, value: int) -> None:
         return core.rt.IndexProperty_SetIndexStorage(self.handle, value)
 
     storage = property(get_storage, set_storage)
@@ -1365,86 +1583,82 @@ class Property(object):
     :data:`RT_Custom` is assumed. Otherwise, :data:`RT_Memory` is the default.
     """
 
-    def get_pagesize(self):
+    def get_pagesize(self) -> int:
         return core.rt.IndexProperty_GetPagesize(self.handle)
 
-    def set_pagesize(self, value):
-        if (value <= 0):
-            raise core.RTreeError("Pagesize must be > 0")
+    def set_pagesize(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("Pagesize must be > 0")
         return core.rt.IndexProperty_SetPagesize(self.handle, value)
 
     pagesize = property(get_pagesize, set_pagesize)
     """The pagesize when disk storage is used.  It is ideal to ensure that your
     index entries fit within a single page for best performance."""
 
-    def get_index_capacity(self):
+    def get_index_capacity(self) -> int:
         return core.rt.IndexProperty_GetIndexCapacity(self.handle)
 
-    def set_index_capacity(self, value):
-        if (value <= 0):
-            raise core.RTreeError("index_capacity must be > 0")
+    def set_index_capacity(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("index_capacity must be > 0")
         return core.rt.IndexProperty_SetIndexCapacity(self.handle, value)
 
     index_capacity = property(get_index_capacity, set_index_capacity)
     """Index capacity"""
 
-    def get_leaf_capacity(self):
+    def get_leaf_capacity(self) -> int:
         return core.rt.IndexProperty_GetLeafCapacity(self.handle)
 
-    def set_leaf_capacity(self, value):
-        if (value <= 0):
-            raise core.RTreeError("leaf_capacity must be > 0")
+    def set_leaf_capacity(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("leaf_capacity must be > 0")
         return core.rt.IndexProperty_SetLeafCapacity(self.handle, value)
 
     leaf_capacity = property(get_leaf_capacity, set_leaf_capacity)
     """Leaf capacity"""
 
-    def get_index_pool_capacity(self):
+    def get_index_pool_capacity(self) -> int:
         return core.rt.IndexProperty_GetIndexPoolCapacity(self.handle)
 
-    def set_index_pool_capacity(self, value):
-        if (value <= 0):
-            raise core.RTreeError("index_pool_capacity must be > 0")
+    def set_index_pool_capacity(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("index_pool_capacity must be > 0")
         return core.rt.IndexProperty_SetIndexPoolCapacity(self.handle, value)
 
-    index_pool_capacity = property(
-        get_index_pool_capacity, set_index_pool_capacity)
+    index_pool_capacity = property(get_index_pool_capacity, set_index_pool_capacity)
     """Index pool capacity"""
 
-    def get_point_pool_capacity(self):
+    def get_point_pool_capacity(self) -> int:
         return core.rt.IndexProperty_GetPointPoolCapacity(self.handle)
 
-    def set_point_pool_capacity(self, value):
-        if (value <= 0):
-            raise core.RTreeError("point_pool_capacity must be > 0")
+    def set_point_pool_capacity(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("point_pool_capacity must be > 0")
         return core.rt.IndexProperty_SetPointPoolCapacity(self.handle, value)
 
-    point_pool_capacity = property(
-        get_point_pool_capacity, set_point_pool_capacity)
+    point_pool_capacity = property(get_point_pool_capacity, set_point_pool_capacity)
     """Point pool capacity"""
 
-    def get_region_pool_capacity(self):
+    def get_region_pool_capacity(self) -> int:
         return core.rt.IndexProperty_GetRegionPoolCapacity(self.handle)
 
-    def set_region_pool_capacity(self, value):
-        if (value <= 0):
-            raise core.RTreeError("region_pool_capacity must be > 0")
+    def set_region_pool_capacity(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("region_pool_capacity must be > 0")
         return core.rt.IndexProperty_SetRegionPoolCapacity(self.handle, value)
 
-    region_pool_capacity = property(
-        get_region_pool_capacity, set_region_pool_capacity)
+    region_pool_capacity = property(get_region_pool_capacity, set_region_pool_capacity)
     """Region pool capacity"""
 
-    def get_buffering_capacity(self):
+    def get_buffering_capacity(self) -> int:
         return core.rt.IndexProperty_GetBufferingCapacity(self.handle)
 
-    def set_buffering_capacity(self, value):
-        if (value <= 0):
-            raise core.RTreeError("buffering_capacity must be > 0")
+    def set_buffering_capacity(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("buffering_capacity must be > 0")
         return core.rt.IndexProperty_SetBufferingCapacity(self.handle, value)
 
-    buffering_capacity = property(
-        get_buffering_capacity, set_buffering_capacity)
+    buffering_capacity = property(get_buffering_capacity, set_buffering_capacity)
     """Buffering capacity"""
 
     def get_tight_mbr(self):
@@ -1452,8 +1666,7 @@ class Property(object):
 
     def set_tight_mbr(self, value):
         value = bool(value)
-        return bool(
-            core.rt.IndexProperty_SetEnsureTightMBRs(self.handle, value))
+        return bool(core.rt.IndexProperty_SetEnsureTightMBRs(self.handle, value))
 
     tight_mbr = property(get_tight_mbr, set_tight_mbr)
     """Uses tight bounding rectangles"""
@@ -1468,17 +1681,17 @@ class Property(object):
     overwrite = property(get_overwrite, set_overwrite)
     """Overwrite existing index files"""
 
-    def get_near_minimum_overlap_factor(self):
+    def get_near_minimum_overlap_factor(self) -> int:
         return core.rt.IndexProperty_GetNearMinimumOverlapFactor(self.handle)
 
-    def set_near_minimum_overlap_factor(self, value):
-        if (value <= 0):
-            raise core.RTreeError("near_minimum_overlap_factor must be > 0")
-        return core.rt.IndexProperty_SetNearMinimumOverlapFactor(
-            self.handle, value)
+    def set_near_minimum_overlap_factor(self, value: int) -> None:
+        if value <= 0:
+            raise RTreeError("near_minimum_overlap_factor must be > 0")
+        return core.rt.IndexProperty_SetNearMinimumOverlapFactor(self.handle, value)
 
     near_minimum_overlap_factor = property(
-        get_near_minimum_overlap_factor, set_near_minimum_overlap_factor)
+        get_near_minimum_overlap_factor, set_near_minimum_overlap_factor
+    )
     """Overlap factor for MVRTrees"""
 
     def get_writethrough(self):
@@ -1491,24 +1704,24 @@ class Property(object):
     writethrough = property(get_writethrough, set_writethrough)
     """Write through caching"""
 
-    def get_fill_factor(self):
+    def get_fill_factor(self) -> int:
         return core.rt.IndexProperty_GetFillFactor(self.handle)
 
-    def set_fill_factor(self, value):
+    def set_fill_factor(self, value: int) -> None:
         return core.rt.IndexProperty_SetFillFactor(self.handle, value)
 
     fill_factor = property(get_fill_factor, set_fill_factor)
     """Index node fill factor before branching"""
 
-    def get_split_distribution_factor(self):
+    def get_split_distribution_factor(self) -> int:
         return core.rt.IndexProperty_GetSplitDistributionFactor(self.handle)
 
-    def set_split_distribution_factor(self, value):
-        return core.rt.IndexProperty_SetSplitDistributionFactor(
-            self.handle, value)
+    def set_split_distribution_factor(self, value: int) -> None:
+        return core.rt.IndexProperty_SetSplitDistributionFactor(self.handle, value)
 
     split_distribution_factor = property(
-        get_split_distribution_factor, set_split_distribution_factor)
+        get_split_distribution_factor, set_split_distribution_factor
+    )
     """Split distribution factor"""
 
     def get_tpr_horizon(self):
@@ -1534,7 +1747,7 @@ class Property(object):
 
     def set_filename(self, value):
         if isinstance(value, str):
-            value = value.encode('utf-8')
+            value = value.encode("utf-8")
         return core.rt.IndexProperty_SetFileName(self.handle, value)
 
     filename = property(get_filename, set_filename)
@@ -1546,9 +1759,8 @@ class Property(object):
 
     def set_dat_extension(self, value):
         if isinstance(value, str):
-            value = value.encode('utf-8')
-        return core.rt.IndexProperty_SetFileNameExtensionDat(
-            self.handle, value)
+            value = value.encode("utf-8")
+        return core.rt.IndexProperty_SetFileNameExtensionDat(self.handle, value)
 
     dat_extension = property(get_dat_extension, set_dat_extension)
     """Extension for .dat file"""
@@ -1559,33 +1771,32 @@ class Property(object):
 
     def set_idx_extension(self, value):
         if isinstance(value, str):
-            value = value.encode('utf-8')
-        return core.rt.IndexProperty_SetFileNameExtensionIdx(
-            self.handle, value)
+            value = value.encode("utf-8")
+        return core.rt.IndexProperty_SetFileNameExtensionIdx(self.handle, value)
 
     idx_extension = property(get_idx_extension, set_idx_extension)
     """Extension for .idx file"""
 
-    def get_custom_storage_callbacks_size(self):
+    def get_custom_storage_callbacks_size(self) -> int:
         return core.rt.IndexProperty_GetCustomStorageCallbacksSize(self.handle)
 
-    def set_custom_storage_callbacks_size(self, value):
-        return core.rt.IndexProperty_SetCustomStorageCallbacksSize(
-            self.handle, value)
+    def set_custom_storage_callbacks_size(self, value: int) -> None:
+        return core.rt.IndexProperty_SetCustomStorageCallbacksSize(self.handle, value)
 
     custom_storage_callbacks_size = property(
-        get_custom_storage_callbacks_size, set_custom_storage_callbacks_size)
+        get_custom_storage_callbacks_size, set_custom_storage_callbacks_size
+    )
     """Size of callbacks for custom storage"""
 
     def get_custom_storage_callbacks(self):
         return core.rt.IndexProperty_GetCustomStorageCallbacks(self.handle)
 
     def set_custom_storage_callbacks(self, value):
-        return core.rt.IndexProperty_SetCustomStorageCallbacks(
-            self.handle, value)
+        return core.rt.IndexProperty_SetCustomStorageCallbacks(self.handle, value)
 
     custom_storage_callbacks = property(
-        get_custom_storage_callbacks, set_custom_storage_callbacks)
+        get_custom_storage_callbacks, set_custom_storage_callbacks
+    )
     """Callbacks for custom storage"""
 
     def get_index_id(self):
@@ -1606,45 +1817,68 @@ id_type = ctypes.c_int64
 class CustomStorageCallbacks(ctypes.Structure):
     # callback types
     createCallbackType = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
+        None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)
+    )
     destroyCallbackType = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
+        None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)
+    )
     flushCallbackType = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
+        None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)
+    )
 
     loadCallbackType = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p, id_type, ctypes.POINTER(ctypes.c_uint32),
+        None,
+        ctypes.c_void_p,
+        id_type,
+        ctypes.POINTER(ctypes.c_uint32),
         ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)),
-        ctypes.POINTER(ctypes.c_int))
+        ctypes.POINTER(ctypes.c_int),
+    )
     storeCallbackType = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p, ctypes.POINTER(id_type), ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int))
+        None,
+        ctypes.c_void_p,
+        ctypes.POINTER(id_type),
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.POINTER(ctypes.c_int),
+    )
     deleteCallbackType = ctypes.CFUNCTYPE(
-        None, ctypes.c_void_p, id_type, ctypes.POINTER(ctypes.c_int))
+        None, ctypes.c_void_p, id_type, ctypes.POINTER(ctypes.c_int)
+    )
 
-    _fields_ = [('context', ctypes.c_void_p),
-                ('createCallback', createCallbackType),
-                ('destroyCallback', destroyCallbackType),
-                ('flushCallback', flushCallbackType),
-                ('loadCallback', loadCallbackType),
-                ('storeCallback', storeCallbackType),
-                ('deleteCallback', deleteCallbackType),
-                ]
+    _fields_ = [
+        ("context", ctypes.c_void_p),
+        ("createCallback", createCallbackType),
+        ("destroyCallback", destroyCallbackType),
+        ("flushCallback", flushCallbackType),
+        ("loadCallback", loadCallbackType),
+        ("storeCallback", storeCallbackType),
+        ("deleteCallback", deleteCallbackType),
+    ]
 
-    def __init__(self, context, createCallback, destroyCallback,
-                 flushCallback, loadCallback, storeCallback, deleteCallback):
-        ctypes.Structure.__init__(self,
-                                  ctypes.c_void_p(context),
-                                  self.createCallbackType(createCallback),
-                                  self.destroyCallbackType(destroyCallback),
-                                  self.flushCallbackType(flushCallback),
-                                  self.loadCallbackType(loadCallback),
-                                  self.storeCallbackType(storeCallback),
-                                  self.deleteCallbackType(deleteCallback),
-                                  )
+    def __init__(
+        self,
+        context,
+        createCallback,
+        destroyCallback,
+        flushCallback,
+        loadCallback,
+        storeCallback,
+        deleteCallback,
+    ) -> None:
+        ctypes.Structure.__init__(
+            self,
+            ctypes.c_void_p(context),
+            self.createCallbackType(createCallback),
+            self.destroyCallbackType(destroyCallback),
+            self.flushCallbackType(flushCallback),
+            self.loadCallbackType(loadCallback),
+            self.storeCallbackType(storeCallback),
+            self.deleteCallbackType(deleteCallback),
+        )
 
 
-class ICustomStorage(object):
+class ICustomStorage:
     # error codes
     NoError = 0
     InvalidPageError = 1
@@ -1664,7 +1898,7 @@ class ICustomStorage(object):
         raise NotImplementedError()
 
     hasData = property(lambda self: False)
-    '''Override this property to allow for reloadable storages'''
+    """Override this property to allow for reloadable storages"""
 
 
 class CustomStorageBase(ICustomStorage):
@@ -1673,12 +1907,19 @@ class CustomStorageBase(ICustomStorage):
 
     def registerCallbacks(self, properties):
         callbacks = CustomStorageCallbacks(
-            ctypes.c_void_p(), self.create, self.destroy, self.flush,
-            self.loadByteArray, self.storeByteArray, self.deleteByteArray)
+            ctypes.c_void_p(),
+            self.create,
+            self.destroy,
+            self.flush,
+            self.loadByteArray,
+            self.storeByteArray,
+            self.deleteByteArray,
+        )
         properties.custom_storage_callbacks_size = ctypes.sizeof(callbacks)
         self.callbacks = callbacks
-        properties.custom_storage_callbacks = \
-            ctypes.cast(ctypes.pointer(callbacks), ctypes.c_void_p)
+        properties.custom_storage_callbacks = ctypes.cast(
+            ctypes.pointer(callbacks), ctypes.c_void_p
+        )
 
     # the user must override these callback functions
     def create(self, context, returnError):
@@ -1719,12 +1960,19 @@ class CustomStorage(ICustomStorage):
 
     def registerCallbacks(self, properties):
         callbacks = CustomStorageCallbacks(
-            0, self._create, self._destroy, self._flush, self._loadByteArray,
-            self._storeByteArray, self._deleteByteArray)
+            0,
+            self._create,
+            self._destroy,
+            self._flush,
+            self._loadByteArray,
+            self._storeByteArray,
+            self._deleteByteArray,
+        )
         properties.custom_storage_callbacks_size = ctypes.sizeof(callbacks)
         self.callbacks = callbacks
-        properties.custom_storage_callbacks = \
-            ctypes.cast(ctypes.pointer(callbacks), ctypes.c_void_p)
+        properties.custom_storage_callbacks = ctypes.cast(
+            ctypes.pointer(callbacks), ctypes.c_void_p
+        )
 
     # these functions handle the C callbacks and massage the data, then
     # delegate to the function without underscore below
@@ -1737,8 +1985,7 @@ class CustomStorage(ICustomStorage):
     def _flush(self, context, returnError):
         self.flush(returnError)
 
-    def _loadByteArray(self, context, page, resultLen,
-                       resultData, returnError):
+    def _loadByteArray(self, context, page, resultLen, resultData, returnError):
         resultString = self.loadByteArray(page, returnError)
         if returnError.contents.value != self.NoError:
             return
@@ -1782,7 +2029,7 @@ class CustomStorage(ICustomStorage):
         """Must be overridden. Must return a string with the loaded data."""
         returnError.contents.value = self.IllegalStateError
         raise NotImplementedError("You must override this method.")
-        return ''
+        return ""
 
     def storeByteArray(self, page, data, returnError):
         """Must be overridden. Must return the new 64-bit page ID of the stored
@@ -1800,7 +2047,7 @@ class CustomStorage(ICustomStorage):
 class RtreeContainer(Rtree):
     """An R-Tree, MVR-Tree, or TPR-Tree indexed container for python objects"""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """Creates a new index
 
         :param stream:
@@ -1825,9 +2072,8 @@ class RtreeContainer(Rtree):
             This parameter determines the coordinate order for all methods that
             take in coordinates.
 
-        :param properties: An :class:`index.Property` object
-            This object sets both the creation and instantiation properties
-            for the object and they are passed down into libspatialindex.
+        :param properties: This object sets both the creation and instantiation
+            properties for the object and they are passed down into libspatialindex.
             A few properties are curried from instantiation parameters
             for you like ``pagesize`` to ensure compatibility with previous
             versions of the library.  All other properties must be set on the
@@ -1872,41 +2118,40 @@ class RtreeContainer(Rtree):
             [34.37768294..., 26.73758537..., 49.37768294..., 41.73758537...]
         """
         if args:
-            if isinstance(args[0], str) \
-                    or isinstance(args[0], bytes) \
-                    or isinstance(args[0], ICustomStorage):
-                raise ValueError('%s supports only in-memory indexes'
-                                 % self.__class__)
-        self._objects = {}
-        return super(RtreeContainer, self).__init__(*args, **kwargs)
+            if (
+                isinstance(args[0], str)
+                or isinstance(args[0], bytes)
+                or isinstance(args[0], ICustomStorage)
+            ):
+                raise ValueError("%s supports only in-memory indexes" % self.__class__)
+        self._objects: Dict[int, Tuple[int, object]] = {}
+        return super().__init__(*args, **kwargs)
 
-    def get_size(self):
+    def get_size(self) -> int:
         try:
             return self.count(self.bounds)
-        except core.RTreeError:
+        except RTreeError:
             return 0
 
-    def __repr__(self):
-        m = 'rtree.index.RtreeContainer(bounds={}, size={})'
+    def __repr__(self) -> str:
+        m = "rtree.index.RtreeContainer(bounds={}, size={})"
         return m.format(self.bounds, self.get_size())
 
-    def __contains__(self, obj):
+    def __contains__(self, obj: object) -> bool:
         return id(obj) in self._objects
 
-    def __len__(self):
+    def __len__(self) -> int:
         return sum(count for count, obj in self._objects.values())
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[object]:
         return iter(obj for count, obj in self._objects.values())
 
-    def insert(self, obj, coordinates):
+    def insert(self, obj: object, coordinates: Any) -> None:  # type: ignore[override]
         """Inserts an item into the index with the given coordinates.
 
-        :param obj: object
-            Any object.
+        :param obj: Any object.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -1940,16 +2185,27 @@ class RtreeContainer(Rtree):
         except KeyError:
             count = 1
         self._objects[id(obj)] = (count, obj)
-        return super(RtreeContainer, self).insert(id(obj), coordinates, None)
+        return super().insert(id(obj), coordinates, None)
 
-    add = insert
+    add = insert  # type: ignore[assignment]
 
-    def intersection(self, coordinates, bbox=False):
+    @overload  # type: ignore[override]
+    def intersection(self, coordinates: Any, bbox: Literal[True]) -> Iterator[Item]:
+        ...
+
+    @overload
+    def intersection(
+        self, coordinates: Any, bbox: Literal[False] = False
+    ) -> Iterator[object]:
+        ...
+
+    def intersection(
+        self, coordinates: Any, bbox: bool = False
+    ) -> Iterator[Union[Item, object]]:
         """Return ids or objects in the index that intersect the given
         coordinates.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -1958,8 +2214,7 @@ class RtreeContainer(Rtree):
             velocity pairs `minvk` and `maxvk` and a time pair for the
             time range as a float.
 
-        :param bbox: True or False
-            If True, the intersection method will return the stored objects,
+        :param bbox: If True, the intersection method will return the stored objects,
             as well as the bounds of the entry.
 
         The following example queries the container for any stored objects that
@@ -2003,25 +2258,35 @@ class RtreeContainer(Rtree):
 
         """
         if bbox is False:
-            for id in super(RtreeContainer,
-                            self).intersection(coordinates, bbox):
+            for id in super().intersection(coordinates, bbox):
                 yield self._objects[id][1]
         elif bbox is True:
-            for value in super(RtreeContainer,
-                               self).intersection(coordinates, bbox):
+            for value in super().intersection(coordinates, bbox):
                 value.object = self._objects[value.id][1]
                 value.id = None
                 yield value
         else:
-            raise ValueError(
-                "valid values for the bbox argument are True and False")
+            raise ValueError("valid values for the bbox argument are True and False")
 
-    def nearest(self, coordinates, num_results=1, bbox=False):
+    @overload  # type: ignore[override]
+    def nearest(
+        self, coordinates: Any, num_results: int = 1, bbox: Literal[True] = True
+    ) -> Iterator[Item]:
+        ...
+
+    @overload
+    def nearest(
+        self, coordinates: Any, num_results: int = 1, bbox: Literal[False] = False
+    ) -> Iterator[object]:
+        ...
+
+    def nearest(
+        self, coordinates: Any, num_results: int = 1, bbox: bool = False
+    ) -> Iterator[Union[Item, object]]:
         """Returns the ``k``-nearest objects to the given coordinates
         in increasing distance order.
 
-        :param coordinates: sequence or array
-            This may be an object that satisfies the numpy array
+        :param coordinates: This may be an object that satisfies the numpy array
             protocol, providing the index's dimension * 2 coordinate
             pairs representing the `mink` and `maxk` coordinates in
             each dimension defining the bounds of the query window.
@@ -2030,14 +2295,12 @@ class RtreeContainer(Rtree):
             velocity pairs `minvk` and `maxvk` and a time pair for the
             time range as a float.
 
-        :param num_results: integer
-            The number of results to return nearest to the given coordinates.
-            If two entries are equidistant, *both* are returned.
+        :param num_results: The number of results to return nearest to the given
+            coordinates. If two entries are equidistant, *both* are returned.
             This property means that :attr:`num_results` may return more
             items than specified.
 
-        :param bbox: True or False
-            If True, the nearest method will return the stored objects, as
+        :param bbox: If True, the nearest method will return the stored objects, as
             well as the bounds of the entry.
 
         .. warning::
@@ -2051,28 +2314,23 @@ class RtreeContainer(Rtree):
             >>> hits = idx.nearest((0, 0, 10, 10), 3, bbox=True)
         """
         if bbox is False:
-            for id in super(RtreeContainer,
-                            self).nearest(coordinates, num_results, bbox):
+            for id in super().nearest(coordinates, num_results, bbox):
                 yield self._objects[id][1]
         elif bbox is True:
-            for value in super(RtreeContainer,
-                               self).nearest(coordinates, num_results, bbox):
+            for value in super().nearest(coordinates, num_results, bbox):
                 value.object = self._objects[value.id][1]
                 value.id = None
                 yield value
         else:
-            raise ValueError(
-                "valid values for the bbox argument are True and False")
+            raise ValueError("valid values for the bbox argument are True and False")
 
-    def delete(self, obj, coordinates):
+    def delete(self, obj: object, coordinates: Any) -> None:
         """Deletes the item from the container within the specified
         coordinates.
 
-        :param obj: object
-            Any object.
+        :param obj: Any object.
 
-        :param coordinates: sequence or array
-            Dimension * 2 coordinate pairs, representing the min
+        :param coordinates: Dimension * 2 coordinate pairs, representing the min
             and max coordinates in each dimension of the item to be
             deleted from the index. Their ordering will depend on the
             index's :attr:`interleaved` data member.
@@ -2114,15 +2372,19 @@ class RtreeContainer(Rtree):
         try:
             count = self._objects[id(obj)][0] - 1
         except KeyError:
-            raise IndexError('object is not in the index')
+            raise IndexError("object is not in the index")
         if count == 0:
             del self._objects[id(obj)]
         else:
             self._objects[id(obj)] = (count, obj)
-        return super(RtreeContainer, self).delete(id(obj), coordinates)
+        return super().delete(id(obj), coordinates)
 
     def leaves(self):
-        return [(self._objects[id][1], [self._objects[child_id][1]
-                                        for child_id in child_ids], bounds)
-                for id, child_ids, bounds
-                in super(RtreeContainer, self).leaves()]
+        return [
+            (
+                self._objects[id][1],
+                [self._objects[child_id][1] for child_id in child_ids],
+                bounds,
+            )
+            for id, child_ids, bounds in super(RtreeContainer, self).leaves()
+        ]

@@ -4,78 +4,76 @@ finder.py
 
 Locate `libspatialindex` shared library by any means necessary.
 """
-import os
-import sys
 import ctypes
+import os
 import platform
+import sys
 from ctypes.util import find_library
 
 # the current working directory of this file
-_cwd = os.path.abspath(os.path.expanduser(
-    os.path.dirname(__file__)))
+_cwd = os.path.abspath(os.path.expanduser(os.path.dirname(__file__)))
 
 # generate a bunch of candidate locations where the
 # libspatialindex shared library *might* be hanging out
 _candidates = [
-    os.environ.get('SPATIALINDEX_C_LIBRARY', None),
-    os.path.join(_cwd, 'lib'),
+    os.environ.get("SPATIALINDEX_C_LIBRARY", None),
+    os.path.join(_cwd, "lib"),
     _cwd,
-    '']
+    "",
+]
 
 
-def load():
+def load() -> ctypes.CDLL:
+    """Load the `libspatialindex` shared library.
+
+    :returns: Loaded shared library
     """
-    Load the `libspatialindex` shared library.
-
-    Returns
-    -----------
-    rt : ctypes object
-      Loaded shared library
-    """
-    if os.name == 'nt':
+    if os.name == "nt":
         # check the platform architecture
-        if '64' in platform.architecture()[0]:
-            arch = '64'
+        if "64" in platform.architecture()[0]:
+            arch = "64"
         else:
-            arch = '32'
-        lib_name = 'spatialindex_c-{}.dll'.format(arch)
+            arch = "32"
+        lib_name = f"spatialindex_c-{arch}.dll"
 
         # add search paths for conda installs
-        if 'conda' in sys.version:
-            _candidates.append(
-                os.path.join(sys.prefix, "Library", "bin"))
+        if (
+            os.path.exists(os.path.join(sys.prefix, "conda-meta"))
+            or "conda" in sys.version
+        ):
+            _candidates.append(os.path.join(sys.prefix, "Library", "bin"))
 
         # get the current PATH
-        oldenv = os.environ.get('PATH', '').strip().rstrip(';')
+        oldenv = os.environ.get("PATH", "").strip().rstrip(";")
         # run through our list of candidate locations
         for path in _candidates:
             if not path or not os.path.exists(path):
                 continue
             # temporarily add the path to the PATH environment variable
             # so Windows can find additional DLL dependencies.
-            os.environ['PATH'] = ';'.join([path, oldenv])
+            os.environ["PATH"] = ";".join([path, oldenv])
             try:
                 rt = ctypes.cdll.LoadLibrary(os.path.join(path, lib_name))
                 if rt is not None:
                     return rt
-            except (WindowsError, OSError):
+            except OSError:
                 pass
             except BaseException as E:
-                print('rtree.finder unexpected error: {}'.format(str(E)))
+                print(f"rtree.finder unexpected error: {E!s}")
             finally:
-                os.environ['PATH'] = oldenv
-        raise OSError("could not find or load {}".format(lib_name))
+                os.environ["PATH"] = oldenv
+        raise OSError(f"could not find or load {lib_name}")
 
-    elif os.name == 'posix':
+    elif os.name == "posix":
 
         # posix includes both mac and linux
         # use the extension for the specific platform
-        if platform.system() == 'Darwin':
+        if platform.system() == "Darwin":
             # macos shared libraries are `.dylib`
             lib_name = "libspatialindex_c.dylib"
         else:
             # linux shared libraries are `.so`
-            lib_name = 'libspatialindex_c.so'
+            lib_name = "libspatialindex_c.so"
 
         # get the starting working directory
         cwd = os.getcwd()
@@ -104,17 +102,16 @@ def load():
                 if rt is not None:
                     return rt
             except BaseException as E:
-                print('rtree.finder ({}) unexpected error: {}'.format(
-                    target, str(E)))
+                print(f"rtree.finder ({target}) unexpected error: {E!s}")
             finally:
                 os.chdir(cwd)
 
     try:
         # try loading library using LD path search
-        rt = ctypes.cdll.LoadLibrary(
-            find_library('spatialindex_c'))
-        if rt is not None:
-            return rt
+        path = find_library("spatialindex_c")
+        if path is not None:
+            return ctypes.cdll.LoadLibrary(path)
+
     except BaseException:
         pass
 

@@ -1,41 +1,30 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import os
-import sys
 
 from setuptools import setup
-from setuptools.dist import Distribution
 from setuptools.command.install import install
-
+from setuptools.dist import Distribution
 from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
-
-
-# Get text from README.txt
-with open('docs/source/README.txt', 'r') as fp:
-    readme_text = fp.read()
-
-# Get __version without importing
-with open('rtree/__init__.py', 'r') as fp:
-    # get and exec just the line which looks like "__version__ = '0.9.4'"
-    exec(next(line for line in fp if '__version__' in line))
 
 # current working directory of this setup.py file
 _cwd = os.path.abspath(os.path.split(__file__)[0])
 
 
-class bdist_wheel(_bdist_wheel):
-    def finalize_options(self):
+class bdist_wheel(_bdist_wheel):  # type: ignore[misc]
+    def finalize_options(self) -> None:
         _bdist_wheel.finalize_options(self)
         self.root_is_pure = False
 
 
-class BinaryDistribution(Distribution):
+class BinaryDistribution(Distribution):  # type: ignore[misc]
     """Distribution which always forces a binary package with platform name"""
-    def has_ext_modules(foo):
+
+    def has_ext_modules(foo) -> bool:
         return True
 
 
-class InstallPlatlib(install):
-    def finalize_options(self):
+class InstallPlatlib(install):  # type: ignore[misc]
+    def finalize_options(self) -> None:
         """
         Copy the shared libraries into the wheel. Note that this
         will *only* check in `rtree/lib` rather than anywhere on
@@ -52,14 +41,12 @@ class InstallPlatlib(install):
         # get the location of the shared library on the filesystem
 
         # where we're putting the shared library in the build directory
-        target_dir = os.path.join(self.build_lib, 'rtree', 'lib')
+        target_dir = os.path.join(self.build_lib, "rtree", "lib")
         # where are we checking for shared libraries
-        source_dir = os.path.join(_cwd, 'rtree', 'lib')
+        source_dir = os.path.join(_cwd, "rtree", "lib")
 
         # what patterns represent shared libraries
-        patterns = {'*.so',
-                    'libspatialindex*dylib',
-                    '*.dll'}
+        patterns = {"*.so", "libspatialindex*dylib", "*.dll"}
 
         if not os.path.isdir(source_dir):
             # no copying of binary parts to library
@@ -85,38 +72,11 @@ class InstallPlatlib(install):
 
             # copy the source file to the target directory
             self.copy_file(
-                os.path.join(source_dir, file_name),
-                os.path.join(target_dir, file_name))
+                os.path.join(source_dir, file_name), os.path.join(target_dir, file_name)
+            )
 
 
 setup(
-    name='Rtree',
-    version=__version__,
-    description='R-Tree spatial index for Python GIS',
-    license='MIT',
-    keywords='gis spatial index r-tree',
-    author='Sean Gillies',
-    author_email='sean.gillies@gmail.com',
-    maintainer='Howard Butler',
-    maintainer_email='howard@hobu.co',
-    url='https://github.com/Toblerity/rtree',
-    long_description=readme_text,
-    packages=['rtree'],
-    package_data={"rtree": ['lib']},
-    zip_safe=False,
-    include_package_data=True,
     distclass=BinaryDistribution,
-    cmdclass={'bdist_wheel': bdist_wheel, 'install': InstallPlatlib},
-    classifiers=[
-        'Development Status :: 5 - Production/Stable',
-        'Intended Audience :: Developers',
-        'Intended Audience :: Science/Research',
-        'License :: OSI Approved :: MIT License',
-        'Operating System :: OS Independent',
-        'Programming Language :: C',
-        'Programming Language :: C++',
-        'Programming Language :: Python',
-        'Topic :: Scientific/Engineering :: GIS',
-        'Topic :: Database',
-    ],
+    cmdclass={"bdist_wheel": bdist_wheel, "install": InstallPlatlib},
 )

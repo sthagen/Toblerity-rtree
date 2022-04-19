@@ -1,52 +1,85 @@
-from collections import namedtuple, defaultdict
-from math import ceil
-
+import os
 import unittest
+from collections import defaultdict, namedtuple
+from math import ceil
+from typing import Any, Iterator, Optional, Tuple, Union
+
 import numpy as np
 
-import os
 from rtree.index import Index, Property, RT_TPRTree
 
 
-class Cartesian(namedtuple("Cartesian", (
-        "id", "time", "x", "y", "x_vel", "y_vel", "update_time",
-        "out_of_bounds"))):
+class Cartesian(
+    namedtuple(
+        "Cartesian",
+        ("id", "time", "x", "y", "x_vel", "y_vel", "update_time", "out_of_bounds"),
+    )
+):
     __slots__ = ()
 
-    def getX(self, t):
+    def getX(self, t: float) -> float:
         return self.x + self.x_vel * (t - self.time)
 
-    def getY(self, t):
+    def getY(self, t: float) -> float:
         return self.y + self.y_vel * (t - self.time)
 
-    def getXY(self, t):
+    def getXY(self, t: float) -> Tuple[float, float]:
         return self.getX(t), self.getY(t)
 
-    def get_coordinates(self, t_now=None):
-        return ((self.x, self.y, self.x, self.y),
-                (self.x_vel, self.y_vel, self.x_vel, self.y_vel),
-                self.time if t_now is None else (self.time, t_now))
+    def get_coordinates(
+        self, t_now: Optional[float] = None
+    ) -> Tuple[
+        Tuple[float, float, float, float],
+        Tuple[float, float, float, float],
+        Union[float, Tuple[float, float]],
+    ]:
+        return (
+            (self.x, self.y, self.x, self.y),
+            (self.x_vel, self.y_vel, self.x_vel, self.y_vel),
+            self.time if t_now is None else (self.time, t_now),
+        )
 
 
-class QueryCartesian(namedtuple("QueryCartesian", (
-        "start_time", "end_time", "x", "y", "dx", "dy"))):
+class QueryCartesian(
+    namedtuple("QueryCartesian", ("start_time", "end_time", "x", "y", "dx", "dy"))
+):
     __slots__ = ()
 
-    def get_coordinates(self):
-        return ((self.x - self.dx, self.y - self.dy,
-                 self.x + self.dx, self.y + self.dy),
-                (0, 0, 0, 0),
-                (self.start_time, self.end_time))
+    def get_coordinates(
+        self,
+    ) -> Tuple[
+        Tuple[float, float, float, float],
+        Tuple[float, float, float, float],
+        Tuple[float, float],
+    ]:
+        return (
+            (self.x - self.dx, self.y - self.dy, self.x + self.dx, self.y + self.dy),
+            (0, 0, 0, 0),
+            (self.start_time, self.end_time),
+        )
 
 
 def data_generator(
-        dataset_size=100, simulation_length=10, max_update_interval=20,
-        queries_per_time_step=5, min_query_extent=0.05, max_query_extent=0.1,
-        horizon=20, min_query_interval=2, max_query_interval=10, agility=0.01,
-        min_speed=0.0025, max_speed=0.0166, min_x=0, min_y=0, max_x=1, max_y=1,
-):
-
-    def create_object(id_, time, x=None, y=None):
+    dataset_size: int = 100,
+    simulation_length: int = 10,
+    max_update_interval: int = 20,
+    queries_per_time_step: int = 5,
+    min_query_extent: float = 0.05,
+    max_query_extent: float = 0.1,
+    horizon: int = 20,
+    min_query_interval: int = 2,
+    max_query_interval: int = 10,
+    agility: float = 0.01,
+    min_speed: float = 0.0025,
+    max_speed: float = 0.0166,
+    min_x: int = 0,
+    min_y: int = 0,
+    max_x: int = 1,
+    max_y: int = 1,
+) -> Iterator[Tuple[str, int, Any]]:
+    def create_object(
+        id_: float, time: float, x: Optional[float] = None, y: Optional[float] = None
+    ) -> Cartesian:
         # Create object with random or defined x, y and random velocity
         if x is None:
             x = np.random.uniform(min_x, max_x)
@@ -66,8 +99,7 @@ def data_generator(
             out_of_bounds = False
             update_time = time + max_update_interval
 
-        return Cartesian(id_, time, x, y, x_vel, y_vel, update_time,
-                         out_of_bounds)
+        return Cartesian(id_, time, x, y, x_vel, y_vel, update_time, out_of_bounds)
 
     objects = list()
     objects_to_update = defaultdict(set)
@@ -120,32 +152,41 @@ def data_generator(
             yield "QUERY", t_now, QueryCartesian(t, t + dt, x, y, dx, dy)
 
 
-def intersects(x1, y1, x2, y2, x, y, dx, dy):
+def intersects(
+    x1: float, y1: float, x2: float, y2: float, x: float, y: float, dx: float, dy: float
+) -> bool:
     # Checks if line from x1, y1 to x2, y2 intersects with rectangle with
     # bottom left at x-dx, y-dy and top right at x+dx, y+dy.
     # Implementation of https://stackoverflow.com/a/293052
 
     # Check if line points not both more/less than max/min for each axis
-    if (x1 > x + dx and x2 > x + dx) or (x1 < x - dx and x2 < x - dx) \
-            or (y1 > y + dy and y2 > y + dy) or (y1 < y - dy and y2 < y - dy):
+    if (
+        (x1 > x + dx and x2 > x + dx)
+        or (x1 < x - dx and x2 < x - dx)
+        or (y1 > y + dy and y2 > y + dy)
+        or (y1 < y - dy and y2 < y - dy)
+    ):
         return False
 
     # Check on which side (+ve, -ve) of the line the rectangle corners are,
     # returning True if any corner is on a different side.
-    calcs = ((y2 - y1) * rect_x + (x1 - x2) * rect_y + (x2 * y1 - x1 * y2)
-             for rect_x, rect_y in ((x - dx, y - dy),
-                                    (x + dx, y - dy),
-                                    (x - dx, y + dy),
-                                    (x + dx, y + dy)))
+    calcs = (
+        (y2 - y1) * rect_x + (x1 - x2) * rect_y + (x2 * y1 - x1 * y2)
+        for rect_x, rect_y in (
+            (x - dx, y - dy),
+            (x + dx, y - dy),
+            (x - dx, y + dy),
+            (x + dx, y + dy),
+        )
+    )
     sign = np.sign(next(calcs))  # First corner (bottom left)
     return any(np.sign(calc) != sign for calc in calcs)  # Check remaining 3
 
 
 class TPRTests(unittest.TestCase):
-
-    def test_tpr(self):
+    def test_tpr(self) -> None:
         # TODO : this freezes forever on some windows cloud builds
-        if os.name == 'nt':
+        if os.name == "nt":
             return
 
         # Cartesians list for brute force
@@ -160,8 +201,7 @@ class TPRTests(unittest.TestCase):
                 tpr_tree.delete(object_.id, object_.get_coordinates(t_now))
                 del objects[object_.id]
             elif operation == "QUERY":
-                tree_intersect = set(
-                    tpr_tree.intersection(object_.get_coordinates()))
+                tree_intersect = set(tpr_tree.intersection(object_.get_coordinates()))
 
                 # Brute intersect
                 brute_intersect = set()
@@ -170,8 +210,15 @@ class TPRTests(unittest.TestCase):
                     x_high, y_high = tree_object.getXY(object_.end_time)
 
                     if intersects(
-                            x_low, y_low, x_high, y_high,  # Line
-                            object_.x, object_.y, object_.dx, object_.dy):  # Rect
+                        x_low,
+                        y_low,
+                        x_high,
+                        y_high,  # Line
+                        object_.x,
+                        object_.y,
+                        object_.dx,
+                        object_.dy,
+                    ):  # Rect
                         brute_intersect.add(tree_object.id)
 
                 # Tree should match brute force approach

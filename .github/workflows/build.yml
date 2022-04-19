@@ -7,6 +7,58 @@ on:
     types:
       - published
 jobs:
+  black:
+    name: black
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+    - name: Setup
+      run: pip install black
+    - name: Lint with black
+      run: black --check --diff .
+
+  flake8:
+    name: flake8
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+    - name: Setup
+      run: pip install flake8
+    - name: Lint with flake8
+      run: flake8
+
+  isort:
+    name: isort
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+    - name: Setup
+      run: pip install isort[colors]
+    - name: Lint with isort
+      run: isort --check --diff .
+
+  mypy:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+    - name: Setup
+      run: pip install mypy pytest
+    - name: Lint with mypy
+      run: mypy .
+
   conda:
     name: Conda ${{ matrix.python-version }} - ${{ matrix.os }}
 
@@ -15,7 +67,7 @@ jobs:
       fail-fast: true
       matrix:
         os: ['ubuntu-latest', 'macos-latest', 'windows-latest']
-        python-version: ['3.8']
+        python-version: ['3.7', '3.8', '3.9', '3.10']
         sidx-version: ['1.8.5','1.9.3']
 
     steps:
@@ -34,11 +86,6 @@ jobs:
       shell: bash -l {0}
       run: |
         pip install -e .
-    - name: Lint with flake8
-      shell: bash -l {0}
-      run: |
-        pip install flake8
-        flake8 rtree/
     - name: Test with pytest
       shell: bash -l {0}
       run: |
@@ -56,60 +103,25 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      name: Install Python
+      with:
+        python-version: '3.10'
     - name: Setup
       shell: bash -l {0}
       run: |
           sudo apt install libspatialindex-c4v5 python3-pip
           python3 -m pip install --upgrade pip
-          python3 -m pip install setuptools numpy flake8 pytest
+          python3 -m pip install setuptools numpy pytest
 
     - name: Build
       shell: bash -l {0}
       run: |
         python3 -m pip install --user .
-    - name: Lint with flake8
-      shell: bash -l {0}
-      run: |
-        export PATH=$PATH:/home/runner/.local/bin
-        flake8 rtree/
     - name: Test with pytest
       shell: bash -l {0}
       run: |
         python3 -m pytest --doctest-modules rtree tests
-
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-    container: osgeo/proj-docs
-    steps:
-    - uses: actions/checkout@v2
-    - name: Run libspatialindex build
-      run: |
-        apt-get update -y
-        apt-get install -y -qq libspatialindex-dev
-        pip3 install --user .
-    - name: Print versions
-      shell: bash -l {0}
-      run: |
-          python3 --version
-          sphinx-build --version
-    - name: Lint .rst files
-      shell: bash -l {0}
-      run: |
-        if find . -name '*.rst' | xargs grep -P '\t'; then echo 'Tabs are bad, please use four spaces in .rst files.'; false; fi
-      working-directory: ./docs
-    - name: HTML
-      shell: bash -l {0}
-      run: |
-        make html
-      working-directory: ./docs
-    - name: PDF
-      shell: bash -l {0}
-      run: |
-        make latexpdf
-      working-directory: ./docs
 
   wheels:
     name: Build wheel on ${{ matrix.os }}
@@ -120,6 +132,10 @@ jobs:
       CIBW_TEST_COMMAND: "pytest -v {project}/tests"
       # we are copying the shared libraries ourselves so skip magical copy
       CIBW_REPAIR_WHEEL_COMMAND_MACOS: ""
+      MACOSX_DEPLOYMENT_TARGET: 10.9
+      CIBW_BUILD_VERBOSITY_MACOS: 3
+      CIBW_TEST_SKIP: "*-macosx_arm64 *-macosx_universal2:arm64"
+      CIBW_ARCHS_MACOS: "x86_64 arm64"
       CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: ""
       CIBW_BEFORE_BUILD_LINUX: "pip install cmake; bash {project}/ci/install_libspatialindex.bash"
     strategy:
@@ -127,13 +143,13 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
     - uses: actions/checkout@v1
-    - uses: actions/setup-python@v1
+    - uses: actions/setup-python@v2
       name: Install Python
       with:
-        python-version: '3.7'
+        python-version: '3.10'
     - name: Install cibuildwheel
       run: |
-        python -m pip install cibuildwheel==1.6.4
+        python -m pip install cibuildwheel==2.3.1
     - name: Run MacOS Preinstall Build
       if: startsWith(matrix.os, 'macos')
       run: |
@@ -150,7 +166,7 @@ jobs:
         ci\install_libspatialindex.bat
     - name: Build wheels
       run: |
-        python -m cibuildwheel --output-dir wheelhouse
+        python3 -m cibuildwheel --output-dir wheelhouse
     - uses: actions/upload-artifact@v2
       with:
         name: ${{ matrix.os }}-whl
@@ -161,7 +177,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-       python_tag: [ "cp35-*", "cp36-*", "cp37-*", "cp38-*", "cp39-*"]
+       python_tag: [ "cp37-*", "cp38-*", "cp39-*", "cp310-*"]
     env:
       CIBW_ARCHS_LINUX: aarch64
       CIBW_BUILD: ${{matrix.python_tag}}
@@ -171,13 +187,13 @@ jobs:
 
     steps:
     - uses: actions/checkout@v1
-    - uses: actions/setup-python@v1
+    - uses: actions/setup-python@v2
       name: Install Python
       with:
-        python-version: '3.8'
+        python-version: '3.10'
     - name: Install cibuildwheel
       run: |
-        python -m pip install cibuildwheel==1.10.0
+        python -m pip install cibuildwheel==2.3.1
     - uses: docker/setup-qemu-action@v1
       name: Set up QEMU
     - name: Build wheels
@@ -200,12 +216,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        name: Install Python
+        with:
+          python-version: '3.10'
       - name: Source
         shell: bash -l {0}
         run: |
             sudo apt install libspatialindex-c4v5 python3-pip
             python3 -m pip install --upgrade pip
-            python3 -m pip install setuptools numpy flake8 pytest wheel
+            python3 -m pip install setuptools numpy pytest wheel
             export PATH=$PATH:/home/runner/.local/bin
             python3 setup.py sdist
 
