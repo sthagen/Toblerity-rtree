@@ -109,7 +109,7 @@ jobs:
         ci\install_libspatialindex.bat
     - name: Build wheels
       uses: pypa/cibuildwheel@v2.16.2
-    - uses: actions/upload-artifact@v3
+    - uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.os }}-whl
         path: wheelhouse/*.whl
@@ -139,7 +139,7 @@ jobs:
             export PATH=$PATH:/home/runner/.local/bin
             python3 setup.py sdist
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           path: dist
         name: Download artifacts
