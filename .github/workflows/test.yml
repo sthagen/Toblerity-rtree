@@ -104,13 +104,13 @@ jobs:
       with:
         python-version: '3.x'
 
-    - uses: ilammy/msvc-dev-cmd@v1.13.0
+    - uses: TheMrMilchmann/setup-msvc-dev@v4
       with:
         arch: ${{ matrix.msvc_arch }}
       if: startsWith(matrix.os, 'windows')
 
     - name: Build wheels
-      uses: pypa/cibuildwheel@v4.2.0
+      uses: pypa/cibuildwheel@v4.2.1
       env:
          CIBW_BUILD: ${{ runner.os == 'Windows' && runner.arch == 'ARM64' && 'cp311-*' || 'cp310-*' }}
 
